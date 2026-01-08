@@ -3,7 +3,7 @@
  * V8: Full emotion spectrum with 27 emotions, 3 frames each
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 // Full emotion spectrum (27 emotions)
 export type V8Emotion =
@@ -89,6 +89,11 @@ export const VikaylaPortrait: React.FC<VikaylaPortraitProps> = ({
     const frameIndex = getSessionFrameIndex(sessionId);
     const [usesFallback, setUsesFallback] = useState(false);
 
+    // Reset fallback state when emotion changes
+    useEffect(() => {
+        setUsesFallback(false);
+    }, [emotion]);
+
     const handleImageError = () => {
         if (!usesFallback) {
             console.warn(`[VikaylaPortrait] Frame not found for emotion: ${emotion}, using placeholder`);
@@ -103,6 +108,7 @@ export const VikaylaPortrait: React.FC<VikaylaPortraitProps> = ({
     return (
         <div className={`vikayla-portrait ${className}`}>
             <img
+                key={`${emotion}-${frameIndex}`} // Force re-render on emotion/frame change
                 src={imageSrc}
                 alt={`V8 - ${emotion}`}
                 onError={handleImageError}
