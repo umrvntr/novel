@@ -30,6 +30,7 @@ export function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [activeReward, setActiveReward] = useState<string | null>(null);
   const [currentPortrait, setCurrentPortrait] = useState<string | null>(null);
+  const [currentEmotion, setCurrentEmotion] = useState<string>('neutral');
   const chatEndRef = useRef<HTMLDivElement>(null);
   const hasInitialized = useRef(false);
 
@@ -125,6 +126,7 @@ export function App() {
       const currentMsgId = `msg_${Date.now()}`;
       let textContent = '';
       let hasAddedMessage = false;
+      let pendingEmotion: string | null = null;
 
       while (reader) {
         const { done, value } = await reader.read();
@@ -140,6 +142,7 @@ export function App() {
 
               // Parallel Metadata Processing
               if (data.portraitUrl) setCurrentPortrait(data.portraitUrl);
+              if (data.emotion) pendingEmotion = data.emotion;
               if (data.rewardCode) setActiveReward(data.rewardCode);
               if (data.choices) setActiveChoices(data.choices);
 
@@ -160,6 +163,12 @@ export function App() {
 
               // Text Streaming
               if (data.text) {
+                // Apply emotion only when text starts arriving
+                if (pendingEmotion) {
+                  setCurrentEmotion(pendingEmotion);
+                  pendingEmotion = null;
+                }
+
                 textContent += data.text;
 
                 if (!hasAddedMessage) {
@@ -270,9 +279,10 @@ export function App() {
         <div className="left-panel">
           <VisualFeed
             backgroundUrl={currentPortrait}
-            v8State={isLoading ? 'thinking' : 'neutral'}
+            emotion={isLoading ? 'thinking' : (currentEmotion as any)}
             status={isLoading ? 'GENERATING' : 'CONNECTED'}
             geoCity={gameState.getGeoContext()?.city}
+            sessionId={gameState.getSessionId()}
           />
         </div>
 

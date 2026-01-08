@@ -1,3 +1,7 @@
 node_modules/
 .env
 .DS_Store
+
+# Assets
+frontend/public/assets/portraits/v8/
+backend/data/

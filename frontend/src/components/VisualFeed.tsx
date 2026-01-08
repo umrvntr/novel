@@ -4,20 +4,22 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { VikaylaPortrait, V8State } from './VikaylaPortrait';
+import { VikaylaPortrait, V8Emotion } from './VikaylaPortrait';
 
 interface VisualFeedProps {
     backgroundUrl?: string | null;
-    v8State?: V8State;
+    emotion?: V8Emotion;
     status?: 'IDLE' | 'GENERATING' | 'CONNECTED' | 'SCANNING';
     geoCity?: string;
+    sessionId?: string;
 }
 
 export const VisualFeed: React.FC<VisualFeedProps> = ({
     backgroundUrl,
-    v8State = 'neutral',
+    emotion = 'neutral',
     status = 'CONNECTED',
-    geoCity
+    geoCity,
+    sessionId
 }) => {
     const [isLoading, setIsLoading] = useState(true);
     const [showNeuralNoise, setShowNeuralNoise] = useState(true);
@@ -64,7 +66,10 @@ export const VisualFeed: React.FC<VisualFeedProps> = ({
 
                 {/* Layer 1: V8 Portrait (Stop-motion) */}
                 <div className="layer-portrait">
-                    <VikaylaPortrait state={v8State} />
+                    <VikaylaPortrait
+                        emotion={emotion}
+                        sessionId={sessionId}
+                    />
                 </div>
 
                 {/* Neural Link transition effect */}

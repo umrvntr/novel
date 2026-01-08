@@ -1,7 +1,7 @@
 {
   "sessionId": "sess_1767802802224_mhck3ojp8",
   "createdAt": 1767868037322,
-  "lastUpdated": 1767868062306,
+  "lastUpdated": 1767871329640,
   "entries": [
     {
       "timestamp": 1767868037322,
@@ -12,6 +12,26 @@
       "timestamp": 1767868062305,
       "type": "user_input",
       "content": "i want to learn AI"
+    },
+    {
+      "timestamp": 1767871151336,
+      "type": "user_input",
+      "content": "how are you?"
+    },
+    {
+      "timestamp": 1767871170695,
+      "type": "user_input",
+      "content": "can you be angry?"
+    },
+    {
+      "timestamp": 1767871226109,
+      "type": "user_input",
+      "content": "can you generate an image?"
+    },
+    {
+      "timestamp": 1767871329640,
+      "type": "user_input",
+      "content": "hello"
     }
   ]
 }
