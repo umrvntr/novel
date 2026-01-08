@@ -7,6 +7,8 @@ import { Router } from 'express';
 import { geoService } from '../services/geoService.js';
 import { generatorService } from '../services/generator.js';
 import { v4 as uuidv4 } from 'uuid';
+import { sessionManager } from '../services/sessionManager.js';
+import { sessionMemory } from '../services/sessionMemory.js';
 
 export const sessionRouter = Router();
 
@@ -19,6 +21,7 @@ interface InitSessionResponse {
         timezone: string;
         timeOfDay: 'day' | 'night' | 'dawn' | 'dusk';
     };
+    currentMood: string;
     warmupStarted: boolean;
 }
 
@@ -35,8 +38,24 @@ sessionRouter.post('/', async (req, res) => {
 
         console.log(`[Session] Initializing session for IP: ${clientIp || 'unknown'}`);
 
-        // Generate or use existing session ID
+        // Generate or use existing session ID and register in manager
         const sessionId = req.body.sessionId || uuidv4();
+        await sessionManager.getSession(sessionId);
+
+        // Sprint 5: Get profile for mood
+        const { userProfile } = await import('../services/userProfile.js');
+        const profile = await userProfile.getProfile(sessionId);
+
+        // Ensure session structure exists in persistence if not already
+        const existingMemory = await sessionMemory.getMemory(sessionId);
+        if (!existingMemory) {
+            await sessionMemory.saveMemory(sessionId, {
+                sessionId,
+                createdAt: Date.now(),
+                lastUpdated: Date.now(),
+                entries: []
+            });
+        }
 
         // Fetch geo data
         const geoData = await geoService.getGeoData(clientIp);
@@ -66,6 +85,7 @@ sessionRouter.post('/', async (req, res) => {
                 timezone: geoData.timezone,
                 timeOfDay
             },
+            currentMood: profile.currentMood || 'neutral',
             warmupStarted
         };
 

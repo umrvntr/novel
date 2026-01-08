@@ -28,6 +28,7 @@ export interface UserProfile {
     isReturningUser: boolean;
     introComplete: boolean;
     keyFacts: string[];  // "User likes cyberpunk", "User is from Madrid"
+    currentMood: string; // V8's persistent mood
 }
 
 class UserProfileService {
@@ -80,7 +81,8 @@ class UserProfileService {
             flags: { curious: 0, cautious: 0, goal_oriented: 0 },
             isReturningUser: false,
             introComplete: false,
-            keyFacts: []
+            keyFacts: [],
+            currentMood: 'neutral'
         };
 
         await this.saveProfile(newProfile);
@@ -136,6 +138,16 @@ class UserProfileService {
     }
 
     /**
+     * Set V8's current mood
+     */
+    async setMood(sessionId: string, mood: string): Promise<void> {
+        const profile = await this.getProfile(sessionId);
+        profile.currentMood = mood;
+        await this.saveProfile(profile);
+        console.log(`[UserProfile] Set mood: ${mood}`);
+    }
+
+    /**
      * Update geo data
      */
     async setGeoData(sessionId: string, geoData: GeoData): Promise<void> {
@@ -177,6 +189,8 @@ class UserProfileService {
         if (profile.keyFacts.length > 0) {
             parts.push(`Known facts: ${profile.keyFacts.slice(-5).join('; ')}`);
         }
+
+        parts.push(`Current Mood: ${profile.currentMood || 'neutral'}`);
 
         parts.push(`Traits: Curious(${profile.flags.curious}), Cautious(${profile.flags.cautious}), Goal(${profile.flags.goal_oriented})`);
 

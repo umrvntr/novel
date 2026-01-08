@@ -43,8 +43,14 @@ export const VisualFeed: React.FC<VisualFeedProps> = ({
         <div className="visual-feed-container">
             {/* Header */}
             <div className="feed-header">
-                <span className="live-indicator">● LIVE FEED</span>
-                <span className="feed-status">[{status}]</span>
+                <div className="header-left">
+                    <span className="live-indicator">● LIVE FEED</span>
+                    <span className="feed-status">[{status}]</span>
+                </div>
+                <div className="header-right">
+                    <span className="mood-label">MOOD:</span>
+                    <span className={`mood-value ${emotion.toLowerCase()}`}>{emotion.toUpperCase()}</span>
+                </div>
             </div>
 
             {/* Viewport with Layers */}

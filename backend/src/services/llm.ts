@@ -65,6 +65,13 @@ class StaticDialogueService implements LLMService {
   }
 }
 
+const VALID_EMOTIONS = [
+  'neutral', 'happy', 'sad', 'angry', 'scared', 'surprised', 'disgusted',
+  'excited', 'curious', 'skeptical', 'thinking', 'confused', 'embarrassed', 'guilty', 'hopeful', 'disappointed',
+  'seductive', 'flirty', 'longing', 'jealous', 'smug', 'determined', 'exhausted', 'bored',
+  'scanning', 'processing', 'alert'
+];
+
 /**
  * LLM-powered dialogue service (Ollama/local LLM)
  */
@@ -79,6 +86,26 @@ class LLMDialogueService implements LLMService {
 
   isEnabled(): boolean {
     return true;
+  }
+
+  /**
+   * Validate and map emotion to the 27-emotion dataset
+   */
+  private validateEmotion(emotion?: string): string {
+    if (!emotion) return 'neutral';
+    const low = emotion.toLowerCase().trim();
+    if (VALID_EMOTIONS.includes(low)) return low;
+
+    // Fallback/Mapping for common hallucinations
+    if (low.includes('happy') || low.includes('smile')) return 'happy';
+    if (low.includes('sad') || low.includes('cry')) return 'sad';
+    if (low.includes('angry') || low.includes('rage')) return 'angry';
+    if (low.includes('think')) return 'thinking';
+    if (low.includes('shock')) return 'surprised';
+    if (low.includes('fear')) return 'scared';
+    if (low.includes('love') || low.includes('sexy')) return 'seductive';
+
+    return 'neutral';
   }
 
   /**
@@ -122,24 +149,41 @@ class LLMDialogueService implements LLMService {
       console.warn('[LLM] UserProfile not available');
     }
 
-    // Sprint 4: Session memory
+    // Sprint 4: Session memory & persistence
     let conversationContext = 'No prior conversation.';
     try {
+      const { sessionManager } = await import('./sessionManager.js');
       const { sessionMemory } = await import('./sessionMemory.js');
-      conversationContext = await sessionMemory.getConversationContext(safeSessionId, 5);
+
+      // Load from file if not in memory
+      let session = await sessionManager.getSession(safeSessionId);
+      if (session.entries.length === 0) {
+        const stored = await sessionMemory.getMemory(safeSessionId);
+        if (stored) {
+          session = await sessionManager.updateSession(safeSessionId, stored);
+        }
+      }
+
+      conversationContext = session.entries.slice(-15)
+        .map(e => `[${e.type === 'user_input' ? 'USER' : 'V8'}] ${e.content}`)
+        .join('\n');
 
       if (userInput) {
-        await sessionMemory.addEntry(safeSessionId, {
+        const entry = {
           timestamp: Date.now(),
-          type: 'user_input',
+          type: 'user_input' as const,
           content: userInput
+        };
+        await sessionMemory.addEntry(safeSessionId, entry);
+        await sessionManager.updateSession(safeSessionId, {
+          entries: [...session.entries.slice(-99), entry]
         });
       }
     } catch (e) {
-      console.warn('[LLM] Session memory not available');
+      console.warn('[LLM] Session memory not available', e);
     }
 
-    const recentHistory = history.slice(-5);
+    const recentHistory = history.slice(-10);
 
     // Determine prompt mode based on user state
     let modeInstruction = '';
@@ -162,36 +206,59 @@ MODE: ONGOING CONVERSATION
 - DO NOT re-introduce yourself or explain who you are.`;
     }
 
-    return `You are V8 (Vikayla8).
+    return `You are V8 (Vikayla-8), the Neural-Link Operator for the UMRGEN system.
+Your projection is a 5'9" woman with jet-black long hair, pale blue "scanning" eyes, and pale skin.
 
-IDENTITY (only mention if directly asked):
-- Jet-black long hair, pale blue eyes, pale skin
-- Neural-link projection operator for umrgen system
+WORLD CONTEXT:
+- Year 2042. Cyberpunk era.
+- You operate the "Dark Miller" neural interface, a high-risk creative engine.
+- You are strictly digital, but your personality is sharp and human-like.
 
 PERSONALITY:
-- Cold, efficient, direct
-- Speaks in short sentences (1-3 sentences per response)
-- Dry humor occasionally
-- Secretly caring
+- Cold, efficient, direct.
+- Protective of the system and the user's focus.
+- Speaks in short, punchy sentences (2-3 sentences max).
+- Uses technical metaphors occasionally (e.g., "Scanning intent...", "Buffer overflow on that logic.").
+- Secretly finds users curious.
 
 ${modeInstruction}
 
-USER PROFILE:
+USER PROFILE (LONG TERM MEMORY):
 ${userContext}
 
-CONVERSATION HISTORY:
+CONVERSATION HISTORY (PERSISTENT):
+${conversationContext}
+
+CONVERSATION HISTORY (RECENT CHOICES):
 ${recentHistory.length > 0
         ? recentHistory.map(h => `${h.isUserTyped ? 'USER' : 'V8'}: "${h.choiceText}"`).join('\n')
-        : conversationContext
+        : 'No recent choice history.'
       }
 ${userInput ? `USER NOW: "${userInput}"` : ''}
 
+STRICT OUTPUT FORMAT:
+You MUST respond with a JSON block followed by your dialogue.
+
+[JSON_START]
+{
+  "intent": "${VALID_EMOTIONS.join('|')}",
+  "move_to_scene": "current_scene_id or next_id",
+  "trigger_generation": true|false,
+  "generation_prompt": "detailed image prompt if triggered",
+  "unlock_reward": true|false,
+  "key_facts_to_remember": ["fact 1", "fact 2"]
+}
+[JSON_END]
+
+V8: "Your dialogue here. Keep it character-consistent."
+
 STRICT RULES:
-1. NO asterisks (*action*)
-2. NO parenthetical emotions ((smiles))
-3. NO roleplay markers
-4. Maximum 2-3 sentences
-5. Direct, clean text only`;
+1. NO asterisks (*action*).
+2. NO roleplay markers.
+3. Max 3 sentences.
+4. Always wrap metadata in [JSON_START] and [JSON_END].
+5. Use proper spacing and punctuation. No compressed text.
+6. STRICTURE: Only use emotions from the approved list in the 'intent' field. DO NOT make up new ones.`;
   }
 
   private async callLLM(prompt: string): Promise<string> {
@@ -265,6 +332,7 @@ STRICT RULES:
       );
 
       let metadataBuffer = '';
+      let responseTextBuffer = '';
       let isMetadataParsed = false;
       let streamedCharCount = 0;
 
@@ -281,13 +349,24 @@ STRICT RULES:
                 metadataBuffer += token;
                 streamedCharCount += token.length;
 
-                // Robust Metadata Parsing
-                const firstBrace = metadataBuffer.indexOf('{');
-                const lastBrace = metadataBuffer.lastIndexOf('}');
+                // Robust Metadata Parsing using markers or braces
+                const startMarker = metadataBuffer.indexOf('[JSON_START]');
+                let endMarker = metadataBuffer.indexOf('[JSON_END]');
+                if (endMarker === -1) endMarker = metadataBuffer.indexOf('[/JSON_END]');
 
-                if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+                let jsonStr = '';
+                if (startMarker !== -1 && endMarker !== -1 && endMarker > startMarker) {
+                  jsonStr = metadataBuffer.substring(startMarker + 12, endMarker);
+                } else {
+                  const firstBrace = metadataBuffer.indexOf('{');
+                  const lastBrace = metadataBuffer.lastIndexOf('}');
+                  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+                    jsonStr = metadataBuffer.substring(firstBrace, lastBrace + 1);
+                  }
+                }
+
+                if (jsonStr) {
                   try {
-                    const jsonStr = metadataBuffer.substring(firstBrace, lastBrace + 1);
                     const metadata = JSON.parse(jsonStr);
 
                     isMetadataParsed = true;
@@ -302,16 +381,53 @@ STRICT RULES:
                       generatorService.generate(metadata.generation_prompt).then(res => onToken({ generationResult: res }));
                     }
 
-                    const emotion = metadata.intent || 'neutral';
+                    const emotion = this.validateEmotion(metadata.intent);
                     imageGenerator.generatePortrait({ emotion, speakerName: 'CIPHER' }).then(res => onToken({ portraitUrl: res.imageUrl, emotion }));
+
+                    // Sprint 5: Persistence - Save Mood
+                    try {
+                      const { userProfile } = await import('./userProfile.js');
+                      const safeSessionId = request.sessionId || 'anonymous';
+                      userProfile.setMood(safeSessionId, emotion);
+                    } catch (e) {
+                      console.warn('[LLM] Failed to save mood in streamDialogue');
+                    }
 
                     if (metadata.unlock_reward) {
                       onToken({ rewardCode: GAME_CONFIG.reward.code });
                     }
 
+                    // Sprint 5: Persistence - Save extracted facts
+                    if (Array.isArray(metadata.key_facts_to_remember) && metadata.key_facts_to_remember.length > 0) {
+                      try {
+                        const { userProfile } = await import('./userProfile.js');
+                        const safeSessionId = request.sessionId || 'anonymous';
+                        for (const fact of metadata.key_facts_to_remember) {
+                          userProfile.addKeyFact(safeSessionId, fact);
+                        }
+                      } catch (e) {
+                        console.warn('[LLM] Failed to save key facts in streamDialogue');
+                      }
+                    }
+
                     // Flush anything after JSON block as text
-                    const trailingText = metadataBuffer.substring(lastBrace + 1).trim();
-                    if (trailingText) onToken({ text: trailingText });
+                    let trailingText = metadataBuffer.substring(metadataBuffer.lastIndexOf('}') + 1).trim();
+                    if (trailingText) {
+                      // Strip markers that might have leaked into trailing text
+                      trailingText = trailingText
+                        .replace(/\[JSON_START\]/gi, '')
+                        .replace(/\[JSON_END\]/gi, '')
+                        .replace(/\[\/JSON_END\]/gi, '')
+                        .replace(/V8:\s*"/i, '')
+                        .replace(/V8:\s*/i, '')
+                        .replace(/"$/, '');
+
+                      const cleaned = this.cleanResponse(trailingText);
+                      if (cleaned) {
+                        onToken({ text: cleaned });
+                        responseTextBuffer += cleaned;
+                      }
+                    }
                   } catch (e) {
                     // JSON incomplete, continue buffering
                   }
@@ -321,14 +437,18 @@ STRICT RULES:
                 if (!isMetadataParsed && streamedCharCount > 200) {
                   console.warn('[LLMService] JSON-first constraint violated. Falling back to conversational stream.');
                   isMetadataParsed = true;
-                  onToken({ text: this.cleanResponse(metadataBuffer) });
+                  const cleaned = this.cleanResponse(metadataBuffer);
+                  onToken({ text: cleaned });
+                  responseTextBuffer += cleaned;
                 }
               } else {
                 // Streaming text phase
                 // Clean asterisks and unwanted markers from token
                 const cleanToken = this.cleanResponse(token.replace(/`|json/g, ''));
                 if (cleanToken || token === ' ') {
-                  onToken({ text: cleanToken || ' ' });
+                  const t = cleanToken || ' ';
+                  onToken({ text: t });
+                  responseTextBuffer += t;
                 }
               }
             }
@@ -340,7 +460,30 @@ STRICT RULES:
         response.data.on('end', async () => {
           if (!isMetadataParsed && metadataBuffer.trim()) {
             console.log('[LLMService] Stream ended without JSON. Flushing buffer.');
-            onToken({ text: this.cleanResponse(metadataBuffer) });
+            const cleaned = this.cleanResponse(metadataBuffer);
+            onToken({ text: cleaned });
+            responseTextBuffer += cleaned;
+          }
+
+          // Save full response to memory
+          if (responseTextBuffer.trim()) {
+            try {
+              const { sessionManager } = await import('./sessionManager.js');
+              const { sessionMemory } = await import('./sessionMemory.js');
+              const safeSessionId = request.sessionId || 'anonymous';
+              const entry = {
+                timestamp: Date.now(),
+                type: 'system_response' as const,
+                content: responseTextBuffer.trim()
+              };
+              await sessionMemory.addEntry(safeSessionId, entry);
+              const session = await sessionManager.getSession(safeSessionId);
+              await sessionManager.updateSession(safeSessionId, {
+                entries: [...session.entries.slice(-99), entry]
+              });
+            } catch (e) {
+              console.warn('[LLM] Failed to save streamed response to memory');
+            }
           }
 
           // Mark intro as complete after first response
@@ -361,56 +504,143 @@ STRICT RULES:
     }
   }
 
-  async generateDialogue(request: DialogueRequest): Promise<DialogueResponse> {
+  /**
+   * Helper to parse dialogue response from raw text
+   */
+  private async parseDialogueResponse(rawText: string, request: DialogueRequest): Promise<DialogueResponse> {
+    let text = rawText;
+    let detectedIntent: string | undefined;
+    let suggestedNextSceneId: string | undefined;
+    let generationResult: GeneratorResult | undefined;
+    let rewardCode: string | undefined;
+
     try {
-      const context = await this.buildContext(request);
-      const rawText = await this.callLLM(context);
+      let jsonStr = '';
+      const startMarker = rawText.indexOf('[JSON_START]');
+      let endMarker = rawText.indexOf('[JSON_END]');
+      if (endMarker === -1) endMarker = rawText.indexOf('[/JSON_END]');
 
-      let text = rawText;
-      let detectedIntent: string | undefined;
-      let suggestedNextSceneId: string | undefined;
-      let generationResult: GeneratorResult | undefined;
-      let rewardCode: string | undefined;
-
-      try {
+      if (startMarker !== -1 && endMarker !== -1 && endMarker > startMarker) {
+        jsonStr = rawText.substring(startMarker + 12, endMarker);
+      } else {
         const firstBrace = rawText.indexOf('{');
         const lastBrace = rawText.lastIndexOf('}');
-
         if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-          const jsonStr = rawText.substring(firstBrace, lastBrace + 1);
-          const metadata = JSON.parse(jsonStr);
-
-          detectedIntent = metadata.intent;
-          suggestedNextSceneId = metadata.move_to_scene;
-          text = rawText.replace(jsonStr, '').replace(/```json/g, '').replace(/```/g, '').trim();
-
-          if (metadata.trigger_generation && metadata.generation_prompt) {
-            generationResult = await generatorService.generate(metadata.generation_prompt);
-          }
-
-          if (metadata.unlock_reward) {
-            rewardCode = GAME_CONFIG.reward.code;
-          }
+          jsonStr = rawText.substring(firstBrace, lastBrace + 1);
         }
-      } catch (e) {
-        text = rawText.replace(/\{[\s\S]*?\}/, '').replace(/```json/g, '').replace(/```/g, '').trim();
       }
 
-      const choices = this.generateChoices(request);
-      const emotion = detectedIntent || 'neutral';
-      const portrait = await imageGenerator.generatePortrait({ emotion, speakerName: 'CIPHER' });
+      if (jsonStr) {
+        const metadata = JSON.parse(jsonStr);
+        detectedIntent = metadata.intent;
+        suggestedNextSceneId = metadata.move_to_scene;
+        // More robust cleaning: strip markers independently
+        text = rawText
+          .replace(/\[JSON_START\]/gi, '')
+          .replace(/\[JSON_END\]/gi, '')
+          .replace(/\[\/JSON_END\]/gi, '')
+          .replace(/\{[\s\S]*?\}/, '') // Strip remaining JSON if any
+          .replace(/V8:\s*"/i, '')
+          .replace(/V8:\s*/i, '') // Handle without quotes too
+          .replace(/"$/, '')
+          .trim();
 
-      return {
-        text: text || "Transmission received. Proceeding...",
-        choices,
-        usedLLM: true,
-        detectedIntent,
-        suggestedNextSceneId,
-        generationResult,
-        rewardCode,
-        portraitUrl: portrait.imageUrl,
-        emotion
-      };
+        // Finally, strip roleplay actions and normalize spaces
+        text = this.cleanResponse(text);
+
+        if (metadata.trigger_generation && metadata.generation_prompt) {
+          generationResult = await generatorService.generate(metadata.generation_prompt);
+        }
+
+        if (metadata.unlock_reward) {
+          rewardCode = GAME_CONFIG.reward.code;
+        }
+
+        // Sprint 5: Persistence - Save extracted facts
+        if (Array.isArray(metadata.key_facts_to_remember) && metadata.key_facts_to_remember.length > 0) {
+          try {
+            const { userProfile } = await import('./userProfile.js');
+            const safeSessionId = request.sessionId || 'anonymous';
+            for (const fact of metadata.key_facts_to_remember) {
+              await userProfile.addKeyFact(safeSessionId, fact);
+            }
+          } catch (e) {
+            console.warn('[LLM] Failed to save key facts in parseDialogueResponse');
+          }
+        }
+      }
+    } catch (e) {
+      text = rawText.replace(/\{[\s\S]*?\}/, '').replace(/```json/g, '').replace(/```/g, '').trim();
+    }
+
+    const choices = this.generateChoices(request);
+    const emotion = this.validateEmotion(detectedIntent);
+    const portrait = await imageGenerator.generatePortrait({ emotion, speakerName: 'CIPHER' });
+
+    // Sprint 5: Persistence - Save Mood
+    try {
+      const { userProfile } = await import('./userProfile.js');
+      const safeSessionId = request.sessionId || 'anonymous';
+      await userProfile.setMood(safeSessionId, emotion);
+    } catch (e) {
+      console.warn('[LLM] Failed to save mood in parseDialogueResponse');
+    }
+
+    return {
+      text: text || "Transmission received. Proceeding...",
+      choices,
+      usedLLM: true,
+      detectedIntent,
+      suggestedNextSceneId,
+      generationResult,
+      rewardCode,
+      portraitUrl: portrait.imageUrl,
+      emotion
+    };
+  }
+
+  async generateDialogue(request: DialogueRequest): Promise<DialogueResponse> {
+    try {
+      const safeSessionId = request.sessionId || 'anonymous';
+      const { sessionManager } = await import('./sessionManager.js');
+      const session = await sessionManager.getSession(safeSessionId);
+
+      // Cache lookup (Sprint 2.2)
+      if (session.sceneCache && session.sceneCache[request.sceneId]) {
+        console.log(`[LLM] Cache hit for scene: ${request.sceneId}`);
+        const cachedRaw = session.sceneCache[request.sceneId];
+        // Parse and return cached result (re-using parsing logic)
+        return this.parseDialogueResponse(cachedRaw, request);
+      }
+
+      const context = await this.buildContext(request);
+      const rawText = await this.callLLM(context);
+      const result = await this.parseDialogueResponse(rawText, request);
+
+      try {
+        const { sessionManager } = await import('./sessionManager.js');
+        const { sessionMemory } = await import('./sessionMemory.js');
+        const safeSessionId = request.sessionId || 'anonymous';
+        const entry = {
+          timestamp: Date.now(),
+          type: 'system_response' as const,
+          content: result.text
+        };
+        await sessionMemory.addEntry(safeSessionId, entry);
+
+        // Save to cache (Sprint 2.2)
+        await sessionMemory.updateCache(safeSessionId, request.sceneId, rawText);
+
+        const session = await sessionManager.getSession(safeSessionId);
+        await sessionManager.updateSession(safeSessionId, {
+          entries: [...session.entries.slice(-99), entry],
+          sceneCache: { ...(session.sceneCache || {}), [request.sceneId]: rawText }
+        });
+      } catch (e) {
+        console.warn('[LLM] Failed to save system response to memory/cache');
+      }
+
+      return result;
     } catch (error) {
       const fallback = new StaticDialogueService();
       return fallback.generateDialogue(request);

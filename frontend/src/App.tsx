@@ -64,6 +64,9 @@ export function App() {
       if (initResponse.ok) {
         const data = await initResponse.json();
         gameState.setGeoContext(data.geoData);
+        if (data.currentMood) {
+          setCurrentEmotion(data.currentMood);
+        }
 
         addMessage({
           speaker: 'SYSTEM',
@@ -100,10 +103,7 @@ export function App() {
   const fetchDialogue = async (userInput?: string) => {
     setIsLoading(true);
 
-    const sessionId = localStorage.getItem('splicer_session_id') || `sess_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    if (!localStorage.getItem('splicer_session_id')) {
-      localStorage.setItem('splicer_session_id', sessionId);
-    }
+    const sessionId = gameState.getSessionId();
 
     try {
       const response = await fetch(`${API_URL}/api/dialogue/stream`, {
