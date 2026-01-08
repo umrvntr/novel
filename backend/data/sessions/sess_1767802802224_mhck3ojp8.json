@@ -1,0 +1,17 @@
+{
+  "sessionId": "sess_1767802802224_mhck3ojp8",
+  "createdAt": 1767868037322,
+  "lastUpdated": 1767868062306,
+  "entries": [
+    {
+      "timestamp": 1767868037322,
+      "type": "user_input",
+      "content": "who are youy?"
+    },
+    {
+      "timestamp": 1767868062305,
+      "type": "user_input",
+      "content": "i want to learn AI"
+    }
+  ]
+}

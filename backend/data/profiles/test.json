@@ -1,0 +1,15 @@
+{
+  "sessionId": "test",
+  "firstSeen": 1767868943373,
+  "lastSeen": 1767868943488,
+  "visitCount": 6,
+  "interests": [],
+  "flags": {
+    "curious": 0,
+    "cautious": 0,
+    "goal_oriented": 0
+  },
+  "isReturningUser": true,
+  "introComplete": true,
+  "keyFacts": []
+}

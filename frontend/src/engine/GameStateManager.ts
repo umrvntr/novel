@@ -1,19 +1,77 @@
 /**
  * EPIC 0 + EPIC 8: Game State Management with Session Persistence
- * Handles all game state operations and localStorage persistence
+ * V8: Added session ID generation and geo-context storage
  */
 
 import type { GameState, UserFlags, HistoryEntry } from '@shared/types';
 import { createInitialState } from '@shared/types';
 
 const STORAGE_KEY = 'visual_novel_state_v1';
+const SESSION_KEY = 'v8_session_id';
+
+export interface GeoContext {
+  city: string;
+  country: string;
+  countryCode: string;
+  timezone: string;
+  timeOfDay: 'day' | 'night' | 'dawn' | 'dusk';
+}
 
 export class GameStateManager {
   private state: GameState;
   private listeners: Set<(state: GameState) => void> = new Set();
+  private sessionId: string;
+  private geoContext: GeoContext | null = null;
 
   constructor() {
     this.state = this.loadState();
+    this.sessionId = this.loadOrCreateSessionId();
+  }
+
+  /**
+   * Generate UUID v4
+   */
+  private generateUUID(): string {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+      const r = Math.random() * 16 | 0;
+      const v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  }
+
+  /**
+   * Load or create session ID
+   */
+  private loadOrCreateSessionId(): string {
+    const stored = localStorage.getItem(SESSION_KEY);
+    if (stored) return stored;
+
+    const newId = this.generateUUID();
+    localStorage.setItem(SESSION_KEY, newId);
+    console.log(`[GameState] New session created: ${newId}`);
+    return newId;
+  }
+
+  /**
+   * Get session ID
+   */
+  getSessionId(): string {
+    return this.sessionId;
+  }
+
+  /**
+   * Set geo context from init-session response
+   */
+  setGeoContext(geo: GeoContext): void {
+    this.geoContext = geo;
+    console.log(`[GameState] Geo context set: ${geo.city}, ${geo.country} (${geo.timeOfDay})`);
+  }
+
+  /**
+   * Get geo context
+   */
+  getGeoContext(): GeoContext | null {
+    return this.geoContext;
   }
 
   /**

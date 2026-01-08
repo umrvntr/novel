@@ -52,6 +52,27 @@ export function App() {
       text: '> NEURAL_LINK v2.0 INITIALIZING...'
     });
 
+    // Initialize session with geo-context (V8 Sprint 1)
+    try {
+      const initResponse = await fetch(`${API_URL}/api/init-session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: gameState.getSessionId() })
+      });
+
+      if (initResponse.ok) {
+        const data = await initResponse.json();
+        gameState.setGeoContext(data.geoData);
+
+        addMessage({
+          speaker: 'SYSTEM',
+          text: `> TRACE COMPLETE: ${data.geoData.city}, ${data.geoData.country}`
+        });
+      }
+    } catch (e) {
+      console.warn('[App] Init-session failed, continuing without geo-context');
+    }
+
     await delay(800);
 
     addMessage({
@@ -248,8 +269,10 @@ export function App() {
         {/* Left Panel: Visual Feed */}
         <div className="left-panel">
           <VisualFeed
-            portraitUrl={currentPortrait}
-            status={isLoading ? 'GENERATING' : currentPortrait ? 'CONNECTED' : 'IDLE'}
+            backgroundUrl={currentPortrait}
+            v8State={isLoading ? 'thinking' : 'neutral'}
+            status={isLoading ? 'GENERATING' : 'CONNECTED'}
+            geoCity={gameState.getGeoContext()?.city}
           />
         </div>
 

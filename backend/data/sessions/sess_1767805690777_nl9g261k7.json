@@ -1,0 +1,17 @@
+{
+  "sessionId": "sess_1767805690777_nl9g261k7",
+  "createdAt": 1767868638072,
+  "lastUpdated": 1767868662798,
+  "entries": [
+    {
+      "timestamp": 1767868638072,
+      "type": "user_input",
+      "content": "hello"
+    },
+    {
+      "timestamp": 1767868662798,
+      "type": "user_input",
+      "content": "what is madrid?"
+    }
+  ]
+}

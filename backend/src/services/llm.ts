@@ -81,35 +81,117 @@ class LLMDialogueService implements LLMService {
     return true;
   }
 
+  /**
+   * Clean response: Remove asterisks, emotes, and unwanted formatting
+   */
+  private cleanResponse(text: string): string {
+    return text
+      .replace(/\*[^*]+\*/g, '')              // Remove *actions*
+      .replace(/\([^)]*emotion[^)]*\)/gi, '') // Remove (emotion) markers
+      .replace(/\s+/g, ' ')                   // Normalize whitespace
+      .trim();
+  }
+
   private async buildContext(request: DialogueRequest): Promise<string> {
     const { flags, history, sessionId, userInput } = request;
+    const safeSessionId = sessionId || 'anonymous';
 
-    let memorySummary = 'No prior link data.';
-    // Local memory logic can be added here in the future
+    // Sprint 5: Get user profile for memory
+    let userContext = 'New user.';
+    let isReturningUser = false;
+    let introComplete = false;
+    let userName = '';
 
+    try {
+      const { userProfile } = await import('./userProfile.js');
+      const profile = await userProfile.getProfile(safeSessionId);
+      userContext = await userProfile.getMemoryContext(safeSessionId);
+      isReturningUser = profile.isReturningUser;
+      introComplete = profile.introComplete;
+      userName = profile.name || '';
+
+      // Extract name from user input if shared
+      if (userInput) {
+        const nameMatch = userInput.match(/(?:my name is|i'm|i am|call me)\s+(\w+)/i);
+        if (nameMatch) {
+          await userProfile.setName(safeSessionId, nameMatch[1]);
+          await userProfile.addKeyFact(safeSessionId, `User's name is ${nameMatch[1]}`);
+        }
+      }
+    } catch (e) {
+      console.warn('[LLM] UserProfile not available');
+    }
+
+    // Sprint 4: Session memory
+    let conversationContext = 'No prior conversation.';
+    try {
+      const { sessionMemory } = await import('./sessionMemory.js');
+      conversationContext = await sessionMemory.getConversationContext(safeSessionId, 5);
+
+      if (userInput) {
+        await sessionMemory.addEntry(safeSessionId, {
+          timestamp: Date.now(),
+          type: 'user_input',
+          content: userInput
+        });
+      }
+    } catch (e) {
+      console.warn('[LLM] Session memory not available');
+    }
 
     const recentHistory = history.slice(-5);
 
-    return `You are ${GAME_CONFIG.speaker.name}. 
-Persona: A 20-year-old operator. You are cold, distant, and efficient on the surface, but have a hidden kind heart. You act indifferent but are secretly protective.
-User Memory: ${memorySummary}
+    // Determine prompt mode based on user state
+    let modeInstruction = '';
+    if (!introComplete && !isReturningUser) {
+      modeInstruction = `
+MODE: FIRST CONTACT
+- This is a NEW user. Perform brief scan/greeting.
+- After this response, intro is complete. Do NOT repeat intro in future messages.
+- Keep it short: 2-3 sentences max.`;
+    } else if (isReturningUser) {
+      modeInstruction = `
+MODE: RETURNING USER
+- User has visited before. DO NOT re-introduce yourself.
+- ${userName ? `Address them as "${userName}".` : 'You may ask for their name if not known.'}
+- Continue naturally from previous context.`;
+    } else {
+      modeInstruction = `
+MODE: ONGOING CONVERSATION
+- Intro already complete. Continue natural dialogue.
+- DO NOT re-introduce yourself or explain who you are.`;
+    }
 
-Current Status: Active Neural Link.
-User Traits: Curious(${flags.curious}), Cautious(${flags.cautious})
+    return `You are V8 (Vikayla8).
 
-Recent Chat:
+IDENTITY (only mention if directly asked):
+- Jet-black long hair, pale blue eyes, pale skin
+- Neural-link projection operator for umrgen system
+
+PERSONALITY:
+- Cold, efficient, direct
+- Speaks in short sentences (1-3 sentences per response)
+- Dry humor occasionally
+- Secretly caring
+
+${modeInstruction}
+
+USER PROFILE:
+${userContext}
+
+CONVERSATION HISTORY:
 ${recentHistory.length > 0
-        ? recentHistory.map(h => `${h.isUserTyped ? 'User' : 'System'}: "${h.choiceText}"`).join('\n')
-        : 'Link established.'
+        ? recentHistory.map(h => `${h.isUserTyped ? 'USER' : 'V8'}: "${h.choiceText}"`).join('\n')
+        : conversationContext
       }
-${userInput ? `CURRENT MESSAGE: "${userInput}"` : ''}
+${userInput ? `USER NOW: "${userInput}"` : ''}
 
-OUTPUT FORMAT:
-- Output exclusively dialogue text. 
-- Do not use asterisks or emotional descriptors.
-- Do not output JSON.
-- Simulate a direct text messaging connection.
-- Keep responses concise and direct.`;
+STRICT RULES:
+1. NO asterisks (*action*)
+2. NO parenthetical emotions ((smiles))
+3. NO roleplay markers
+4. Maximum 2-3 sentences
+5. Direct, clean text only`;
   }
 
   private async callLLM(prompt: string): Promise<string> {
@@ -239,14 +321,14 @@ OUTPUT FORMAT:
                 if (!isMetadataParsed && streamedCharCount > 200) {
                   console.warn('[LLMService] JSON-first constraint violated. Falling back to conversational stream.');
                   isMetadataParsed = true;
-                  onToken({ text: metadataBuffer });
+                  onToken({ text: this.cleanResponse(metadataBuffer) });
                 }
               } else {
                 // Streaming text phase
-                const cleanToken = token.replace(/`|json/g, '').trim();
-                // Maintain spaces
+                // Clean asterisks and unwanted markers from token
+                const cleanToken = this.cleanResponse(token.replace(/`|json/g, ''));
                 if (cleanToken || token === ' ') {
-                  onToken({ text: token });
+                  onToken({ text: cleanToken || ' ' });
                 }
               }
             }
@@ -255,11 +337,20 @@ OUTPUT FORMAT:
           }
         });
 
-        response.data.on('end', () => {
+        response.data.on('end', async () => {
           if (!isMetadataParsed && metadataBuffer.trim()) {
             console.log('[LLMService] Stream ended without JSON. Flushing buffer.');
-            onToken({ text: metadataBuffer });
+            onToken({ text: this.cleanResponse(metadataBuffer) });
           }
+
+          // Mark intro as complete after first response
+          try {
+            const { userProfile } = await import('./userProfile.js');
+            await userProfile.markIntroComplete(request.sessionId || 'anonymous');
+          } catch (e) {
+            // Ignore if userProfile not available
+          }
+
           resolve();
         });
         response.data.on('error', (err: any) => reject(err));
