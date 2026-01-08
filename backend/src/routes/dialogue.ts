@@ -37,9 +37,6 @@ dialogueRouter.post('/', async (req, res) => {
     // Get LLM service
     const llmService = getLLMService();
 
-    // Generate dialogue
-    // EPIC 4: If LLM is enabled, use it for text generation
-    // Otherwise, return static dialogue from scene definitions
     const response: DialogueResponse = await llmService.generateDialogue(request);
 
     res.json(response);
@@ -49,6 +46,34 @@ dialogueRouter.post('/', async (req, res) => {
       error: 'Failed to generate dialogue',
       message: error instanceof Error ? error.message : 'Unknown error'
     });
+  }
+});
+
+/**
+ * POST /api/dialogue/stream
+ * SSE version for performance overdrive
+ */
+dialogueRouter.post('/stream', async (req, res) => {
+  try {
+    const request = req.body as DialogueRequest;
+
+    // SSE Headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    const llmService = getLLMService();
+
+    await llmService.streamDialogue(request, (data) => {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    });
+
+    res.write('event: end\ndata: {}\n\n');
+    res.end();
+  } catch (error) {
+    console.error('Dialogue streaming error:', error);
+    res.write(`event: error\ndata: ${JSON.stringify({ message: 'Stream failed' })}\n\n`);
+    res.end();
   }
 });
 

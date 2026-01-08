@@ -4,10 +4,15 @@
  */
 
 import axios from 'axios';
-import type { DialogueRequest, DialogueResponse, Choice } from '@shared/types.js';
+import type { DialogueRequest, DialogueResponse, Choice, GeneratorResult } from '@shared/types.js';
+import { GAME_CONFIG, GAME_STEPS, getStep } from '@shared/gameScript.js';
+import { generatorService } from './generator.js';
+import { imageGenerator } from './imageGenerator.js';
+
 
 interface LLMService {
   generateDialogue(request: DialogueRequest): Promise<DialogueResponse>;
+  streamDialogue(request: DialogueRequest, onToken: (data: Partial<DialogueResponse>) => void): Promise<void>;
   isEnabled(): boolean;
 }
 
@@ -21,8 +26,6 @@ class StaticDialogueService implements LLMService {
   }
 
   async generateDialogue(request: DialogueRequest): Promise<DialogueResponse> {
-    // Return hardcoded response based on scene
-    // In production, this would load from scene definitions
     const staticResponses: Record<string, DialogueResponse> = {
       scene_01: {
         text: 'Welcome. I\'m your guide through this experience.\n\nBefore we begin, tell me: what brings you here today?',
@@ -49,27 +52,21 @@ class StaticDialogueService implements LLMService {
     return staticResponses[request.sceneId] || {
       text: 'Scene not found. Please restart.',
       choices: [
-        {
-          id: 'restart',
-          text: 'Restart',
-          nextSceneId: 'scene_01',
-          style: 'primary'
-        },
-        {
-          id: 'restart2',
-          text: 'Restart',
-          nextSceneId: 'scene_01',
-          style: 'secondary'
-        }
+        { id: 'restart', text: 'Restart', nextSceneId: 'scene_01', style: 'primary' },
+        { id: 'restart2', text: 'Restart', nextSceneId: 'scene_01', style: 'secondary' }
       ],
       usedLLM: false
     };
+  }
+
+  async streamDialogue(request: DialogueRequest, onToken: (data: Partial<DialogueResponse>) => void): Promise<void> {
+    const response = await this.generateDialogue(request);
+    onToken(response);
   }
 }
 
 /**
  * LLM-powered dialogue service (Ollama/local LLM)
- * EPIC 4: Generate dynamic dialogue based on user flags and history
  */
 class LLMDialogueService implements LLMService {
   private endpoint: string;
@@ -84,54 +81,37 @@ class LLMDialogueService implements LLMService {
     return true;
   }
 
-  /**
-   * Build strict context for LLM
-   * EPIC 4: Context is limited to scene, flags, and short history
-   */
-  private buildContext(request: DialogueRequest): string {
-    const { sceneId, flags, history } = request;
+  private async buildContext(request: DialogueRequest): Promise<string> {
+    const { flags, history, sessionId, userInput } = request;
 
-    // Get last 3 history entries for context
-    const recentHistory = history.slice(-3);
+    let memorySummary = 'No prior link data.';
+    // Local memory logic can be added here in the future
 
-    // Build context string
-    let context = `You are a guide character in an interactive visual novel that leads users toward trying a generator tool.
 
-Scene: ${sceneId}
+    const recentHistory = history.slice(-5);
 
-User Traits (0-10 scale):
-- Curious: ${flags.curious}/10 (interest in creative/aesthetic aspects)
-- Cautious: ${flags.cautious}/10 (skepticism, needs proof)
-- Goal-Oriented: ${flags.goal_oriented}/10 (focused on practical results)
+    return `You are ${GAME_CONFIG.speaker.name}. 
+Persona: A 20-year-old operator. You are cold, distant, and efficient on the surface, but have a hidden kind heart. You act indifferent but are secretly protective.
+User Memory: ${memorySummary}
 
-Recent Conversation:
+Current Status: Active Neural Link.
+User Traits: Curious(${flags.curious}), Cautious(${flags.cautious})
+
+Recent Chat:
 ${recentHistory.length > 0
-  ? recentHistory.map(h => `User chose: "${h.choiceText}"`).join('\n')
-  : 'This is the start of the conversation.'
-}
+        ? recentHistory.map(h => `${h.isUserTyped ? 'User' : 'System'}: "${h.choiceText}"`).join('\n')
+        : 'Link established.'
+      }
+${userInput ? `CURRENT MESSAGE: "${userInput}"` : ''}
 
-Your personality adapts based on user traits:
-- High Curious → Be encouraging and creative
-- High Cautious → Be direct and provide evidence
-- High Goal-Oriented → Be efficient and results-focused
-
-YOUR TASK:
-Generate a single dialogue line (2-3 sentences) that advances the user toward:
-1. Understanding the tool
-2. Trying the free demo
-3. Eventually upgrading to PRO
-
-The dialogue should feel natural and adapt to their traits.
-Do NOT be overly salesy. Be helpful and direct.
-
-IMPORTANT: Only generate the dialogue text. Do not include choices - the system handles those.`;
-
-    return context;
+OUTPUT FORMAT:
+- Output exclusively dialogue text. 
+- Do not use asterisks or emotional descriptors.
+- Do not output JSON.
+- Simulate a direct text messaging connection.
+- Keep responses concise and direct.`;
   }
 
-  /**
-   * Call LLM API (Ollama format)
-   */
   private async callLLM(prompt: string): Promise<string> {
     try {
       const response = await axios.post(
@@ -140,17 +120,10 @@ IMPORTANT: Only generate the dialogue text. Do not include choices - the system 
           model: this.model,
           prompt,
           stream: false,
-          options: {
-            temperature: 0.7,
-            max_tokens: 200, // Limit response length
-            stop: ['\n\n', 'User:', 'Choice:']
-          }
+          options: { temperature: 0.7, max_tokens: 300, stop: ['\n\n', 'User:', 'Choice:'] }
         },
-        {
-          timeout: 10000 // 10 second timeout
-        }
+        { timeout: 60000 }
       );
-
       return response.data.response.trim();
     } catch (error) {
       console.error('LLM API error:', error);
@@ -158,112 +131,218 @@ IMPORTANT: Only generate the dialogue text. Do not include choices - the system 
     }
   }
 
-  /**
-   * Generate choices based on scene and flags
-   * EPIC 4: LLM does NOT control transitions - only dialogue text
-   */
   private generateChoices(request: DialogueRequest): [Choice, Choice] {
-    // Choices are deterministic based on scene
-    // This maintains funnel control while allowing dynamic dialogue
-
-    const { sceneId, flags } = request;
-
-    // Scene-specific choice logic
-    // In production, this would be more sophisticated
-    const choices: [Choice, Choice] = [
+    // Return dummy choices for endless chat format
+    // The frontend should primarily rely on text input now
+    return [
       {
-        id: 'continue',
-        text: 'Continue',
-        nextSceneId: this.getNextScene(sceneId, 'continue'),
-        flagModifiers: { curious: 1 },
+        id: 'reply',
+        text: '...',
+        nextSceneId: request.sceneId, // Loop back
+        flagModifiers: {},
         style: 'primary'
       },
       {
-        id: 'ask_more',
-        text: 'Tell me more',
-        nextSceneId: this.getNextScene(sceneId, 'ask_more'),
-        flagModifiers: { cautious: 1 },
+        id: 'reply_2',
+        text: '...',
+        nextSceneId: request.sceneId, // Loop back
+        flagModifiers: {},
         style: 'secondary'
       }
     ];
-
-    return choices;
   }
 
-  /**
-   * Deterministic scene transitions (EPIC 3)
-   * LLM does NOT control this - funnel logic remains fixed
-   */
   private getNextScene(currentScene: string, choiceType: string): string {
-    // Simplified example - in production, use the scene graph
-    const transitions: Record<string, Record<string, string>> = {
-      scene_01: {
-        continue: 'scene_02_curious',
-        ask_more: 'scene_02_goal'
-      }
+    const currentStep = getStep(currentScene);
+    if (currentStep?.nextStep) return currentStep.nextStep;
+
+    const transitions: Record<string, string> = {
+      curious: 'quest_curious',
+      cautious: 'quest_skeptical',
+      goal_oriented: 'reward_unlock'
     };
 
-    return transitions[currentScene]?.[choiceType] || 'scene_01';
+    return transitions[choiceType] || 'intro_1';
   }
 
-  /**
-   * Generate dialogue using LLM
-   */
+  async streamDialogue(request: DialogueRequest, onToken: (data: Partial<DialogueResponse>) => void): Promise<void> {
+    try {
+      console.log(`[LLMService] streamDialogue initiated for scene: ${request.sceneId}`);
+      const context = await this.buildContext(request);
+      console.log(`[LLMService] Sending streaming request to: ${this.endpoint}/api/generate`);
+
+      const response = await axios.post(
+        `${this.endpoint}/api/generate`,
+        {
+          model: this.model,
+          prompt: context,
+          stream: true,
+          options: { temperature: 0.7, max_tokens: 300, stop: ['\n\n', 'User:', 'Choice:'] }
+        },
+        { responseType: 'stream', timeout: 60000 }
+      );
+
+      let metadataBuffer = '';
+      let isMetadataParsed = false;
+      let streamedCharCount = 0;
+
+      return new Promise((resolve, reject) => {
+        response.data.on('data', async (chunk: any) => {
+          try {
+            const lines = chunk.toString().split('\n');
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              const json = JSON.parse(line);
+              const token = json.response;
+
+              if (!isMetadataParsed) {
+                metadataBuffer += token;
+                streamedCharCount += token.length;
+
+                // Robust Metadata Parsing
+                const firstBrace = metadataBuffer.indexOf('{');
+                const lastBrace = metadataBuffer.lastIndexOf('}');
+
+                if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+                  try {
+                    const jsonStr = metadataBuffer.substring(firstBrace, lastBrace + 1);
+                    const metadata = JSON.parse(jsonStr);
+
+                    isMetadataParsed = true;
+                    console.log('[LLMService] Metadata block extracted.');
+
+                    onToken({
+                      detectedIntent: metadata.intent,
+                      suggestedNextSceneId: metadata.move_to_scene,
+                    });
+
+                    if (metadata.trigger_generation && metadata.generation_prompt) {
+                      generatorService.generate(metadata.generation_prompt).then(res => onToken({ generationResult: res }));
+                    }
+
+                    const emotion = metadata.intent || 'neutral';
+                    imageGenerator.generatePortrait({ emotion, speakerName: 'CIPHER' }).then(res => onToken({ portraitUrl: res.imageUrl, emotion }));
+
+                    if (metadata.unlock_reward) {
+                      onToken({ rewardCode: GAME_CONFIG.reward.code });
+                    }
+
+                    // Flush anything after JSON block as text
+                    const trailingText = metadataBuffer.substring(lastBrace + 1).trim();
+                    if (trailingText) onToken({ text: trailingText });
+                  } catch (e) {
+                    // JSON incomplete, continue buffering
+                  }
+                }
+
+                // Conversational Fallback: If no JSON found within 200 chars, start streaming raw text
+                if (!isMetadataParsed && streamedCharCount > 200) {
+                  console.warn('[LLMService] JSON-first constraint violated. Falling back to conversational stream.');
+                  isMetadataParsed = true;
+                  onToken({ text: metadataBuffer });
+                }
+              } else {
+                // Streaming text phase
+                const cleanToken = token.replace(/`|json/g, '').trim();
+                // Maintain spaces
+                if (cleanToken || token === ' ') {
+                  onToken({ text: token });
+                }
+              }
+            }
+          } catch (e) {
+            console.error('[LLMService] Error parsing stream chunk:', e);
+          }
+        });
+
+        response.data.on('end', () => {
+          if (!isMetadataParsed && metadataBuffer.trim()) {
+            console.log('[LLMService] Stream ended without JSON. Flushing buffer.');
+            onToken({ text: metadataBuffer });
+          }
+          resolve();
+        });
+        response.data.on('error', (err: any) => reject(err));
+      });
+    } catch (error) {
+      console.error('[LLMService] Streaming failed:', error);
+      throw error;
+    }
+  }
+
   async generateDialogue(request: DialogueRequest): Promise<DialogueResponse> {
     try {
-      // Build context
-      const context = this.buildContext(request);
+      const context = await this.buildContext(request);
+      const rawText = await this.callLLM(context);
 
-      // Call LLM
-      const text = await this.callLLM(context);
+      let text = rawText;
+      let detectedIntent: string | undefined;
+      let suggestedNextSceneId: string | undefined;
+      let generationResult: GeneratorResult | undefined;
+      let rewardCode: string | undefined;
 
-      // Generate deterministic choices
+      try {
+        const firstBrace = rawText.indexOf('{');
+        const lastBrace = rawText.lastIndexOf('}');
+
+        if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+          const jsonStr = rawText.substring(firstBrace, lastBrace + 1);
+          const metadata = JSON.parse(jsonStr);
+
+          detectedIntent = metadata.intent;
+          suggestedNextSceneId = metadata.move_to_scene;
+          text = rawText.replace(jsonStr, '').replace(/```json/g, '').replace(/```/g, '').trim();
+
+          if (metadata.trigger_generation && metadata.generation_prompt) {
+            generationResult = await generatorService.generate(metadata.generation_prompt);
+          }
+
+          if (metadata.unlock_reward) {
+            rewardCode = GAME_CONFIG.reward.code;
+          }
+        }
+      } catch (e) {
+        text = rawText.replace(/\{[\s\S]*?\}/, '').replace(/```json/g, '').replace(/```/g, '').trim();
+      }
+
       const choices = this.generateChoices(request);
+      const emotion = detectedIntent || 'neutral';
+      const portrait = await imageGenerator.generatePortrait({ emotion, speakerName: 'CIPHER' });
 
       return {
-        text,
+        text: text || "Transmission received. Proceeding...",
         choices,
-        usedLLM: true
+        usedLLM: true,
+        detectedIntent,
+        suggestedNextSceneId,
+        generationResult,
+        rewardCode,
+        portraitUrl: portrait.imageUrl,
+        emotion
       };
     } catch (error) {
-      console.error('LLM generation failed, falling back to static:', error);
-      // Fallback to static service
       const fallback = new StaticDialogueService();
       return fallback.generateDialogue(request);
     }
   }
 }
 
-/**
- * Get LLM service instance (singleton pattern)
- */
 let llmServiceInstance: LLMService | null = null;
 
 export function getLLMService(): LLMService {
-  if (llmServiceInstance) {
-    return llmServiceInstance;
-  }
+  if (llmServiceInstance) return llmServiceInstance;
 
-  // Check if LLM is enabled
   const llmEnabled = process.env.LLM_ENABLED === 'true';
-
   if (llmEnabled) {
     const endpoint = process.env.LLM_ENDPOINT || 'http://localhost:11434';
     const model = process.env.LLM_MODEL || 'llama2';
-
-    console.log('Initializing LLM service:', { endpoint, model });
     llmServiceInstance = new LLMDialogueService(endpoint, model);
   } else {
-    console.log('LLM disabled, using static dialogue service');
     llmServiceInstance = new StaticDialogueService();
   }
-
-  return llmServiceInstance;
+  return llmServiceInstance!;
 }
 
-/**
- * Reset LLM service (for testing)
- */
 export function resetLLMService(): void {
   llmServiceInstance = null;
 }

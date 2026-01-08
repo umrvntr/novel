@@ -36,8 +36,9 @@ export interface GameState {
 export interface HistoryEntry {
   timestamp: number;
   sceneId: string;
-  choiceId: string;
-  choiceText: string;
+  choiceId?: string;     // Optional if using typing
+  choiceText: string;    // The text shown to user or user's input
+  isUserTyped?: boolean; // Was this an actual typed input?
 }
 
 // ============================================================================
@@ -129,6 +130,8 @@ export interface DialogueRequest {
   sceneId: string;
   flags: UserFlags;
   history: HistoryEntry[];
+  userInput?: string; // Optional: what the user just typed
+  sessionId?: string; // For persistent memory (Sprint 6)
 }
 
 /**
@@ -138,7 +141,13 @@ export interface DialogueRequest {
 export interface DialogueResponse {
   text: string;
   choices: [Choice, Choice];
-  usedLLM: boolean; // Did the backend use LLM for this response?
+  usedLLM: boolean;
+  suggestedNextSceneId?: string;
+  detectedIntent?: string;
+  generationResult?: GeneratorResult;
+  rewardCode?: string;
+  portraitUrl?: string;  // Speaker portrait from ComfyUI
+  emotion?: string;       // Current speaker emotion
 }
 
 // ============================================================================

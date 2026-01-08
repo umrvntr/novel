@@ -1,85 +1,319 @@
 /**
- * EPIC 1: Main App Component
- * Orchestrates game flow and state management
+ * TERMINAL CHAT GAME - Main App Component
+ * Clean, focused terminal experience with speaker portraits
  */
 
-import { useState, useEffect } from 'react';
-import { GameCanvas } from './components/GameCanvas';
+import { useState, useEffect, useRef } from 'react';
+import { TerminalInput } from './components/TerminalInput';
+import { VisualFeed } from './components/VisualFeed';
+import { RewardModule } from './components/RewardModule';
+import { TypewriterText } from './components/TypewriterText';
 import { gameState } from './engine/GameStateManager';
-import { getScene } from './data/scenes';
-import type { GameState } from '@shared/types';
+import { Choice } from '@shared/gameScript';
 import './App.css';
 
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5174';
+
+// Chat message type
+interface ChatMessage {
+  id: string;
+  speaker: 'SYSTEM' | 'GUIDE' | 'USER';
+  text: string;
+  portraitUrl?: string;
+  emotion?: string;
+  timestamp: number;
+}
+
 export function App() {
-  const [state, setState] = useState<GameState>(gameState.getState());
-  const [currentScene, setCurrentScene] = useState(getScene(state.sceneId));
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [activeChoices, setActiveChoices] = useState<Choice[] | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [activeReward, setActiveReward] = useState<string | null>(null);
+  const [currentPortrait, setCurrentPortrait] = useState<string | null>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const hasInitialized = useRef(false);
 
-  // Subscribe to state changes
+  // Initialize game
   useEffect(() => {
-    const unsubscribe = gameState.subscribe((newState) => {
-      setState(newState);
-      setCurrentScene(getScene(newState.sceneId));
-    });
-
-    return unsubscribe;
+    if (hasInitialized.current) return;
+    hasInitialized.current = true;
+    startGame();
   }, []);
 
-  // Handle user choice (EPIC 1 + EPIC 3)
-  const handleChoice = (choiceId: string) => {
-    const choice = currentScene.choices.find(c => c.id === choiceId);
-    if (!choice) return;
+  // Auto-scroll to bottom
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
-    // Add to history
+  const startGame = async () => {
+    // Add system intro
+    addMessage({
+      speaker: 'SYSTEM',
+      text: '> NEURAL_LINK v2.0 INITIALIZING...'
+    });
+
+    await delay(800);
+
+    addMessage({
+      speaker: 'SYSTEM',
+      text: '> CONNECTION ESTABLISHED'
+    });
+
+    await delay(500);
+
+    // Get initial dialogue from backend
+    await fetchDialogue();
+  };
+
+  const addMessage = (msg: Omit<ChatMessage, 'id' | 'timestamp'>) => {
+    setMessages(prev => [...prev, {
+      ...msg,
+      id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      timestamp: Date.now()
+    }]);
+  };
+
+  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+  const fetchDialogue = async (userInput?: string) => {
+    setIsLoading(true);
+
+    const sessionId = localStorage.getItem('splicer_session_id') || `sess_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    if (!localStorage.getItem('splicer_session_id')) {
+      localStorage.setItem('splicer_session_id', sessionId);
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/api/dialogue/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sceneId: gameState.getState().sceneId,
+          flags: gameState.getState().flags,
+          history: gameState.getState().history,
+          userInput,
+          sessionId
+        })
+      });
+
+      if (!response.ok) throw new Error('API error');
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+
+      const currentMsgId = `msg_${Date.now()}`;
+      let textContent = '';
+      let hasAddedMessage = false;
+
+      while (reader) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+
+              // Parallel Metadata Processing
+              if (data.portraitUrl) setCurrentPortrait(data.portraitUrl);
+              if (data.rewardCode) setActiveReward(data.rewardCode);
+              if (data.choices) setActiveChoices(data.choices);
+
+              if (data.detectedIntent) {
+                const flagMap: Record<string, any> = {
+                  curious: { curious: 1 },
+                  cautious: { cautious: 1 },
+                  goal_oriented: { goal_oriented: 1 }
+                };
+                if (flagMap[data.detectedIntent]) {
+                  gameState.updateFlags(flagMap[data.detectedIntent]);
+                }
+              }
+
+              if (data.suggestedNextSceneId) {
+                gameState.setSceneId(data.suggestedNextSceneId);
+              }
+
+              // Text Streaming
+              if (data.text) {
+                textContent += data.text;
+
+                if (!hasAddedMessage) {
+                  setMessages(prev => [...prev, {
+                    id: currentMsgId,
+                    speaker: 'GUIDE',
+                    text: textContent,
+                    timestamp: Date.now(),
+                    emotion: data.emotion || 'neutral'
+                  }]);
+                  hasAddedMessage = true;
+                } else {
+                  setMessages(prev => prev.map(m =>
+                    m.id === currentMsgId ? { ...m, text: textContent } : m
+                  ));
+                }
+              }
+            } catch (e) {
+              // Ignore partial JSON
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Dialogue fetch failed:', error);
+      addMessage({
+        speaker: 'SYSTEM',
+        text: '> ERROR: Neural link unstable. Retrying...'
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleChoice = async (choice: Choice) => {
+    if (isLoading) return;
+
+    setActiveChoices(null);
+
+    // Add choice to chat history
+    addMessage({
+      speaker: 'USER',
+      text: choice.text
+    });
+
+    // Update game state
     gameState.addHistory({
-      sceneId: currentScene.id,
+      sceneId: gameState.getState().sceneId,
       choiceId: choice.id,
       choiceText: choice.text
     });
 
-    // Update flags (EPIC 3)
-    if (choice.flagModifiers) {
-      gameState.updateFlags(choice.flagModifiers);
-    }
+    gameState.setSceneId(choice.nextStepId);
 
-    // Navigate to next scene
-    gameState.setSceneId(choice.nextSceneId);
+    // Fetch next step results
+    await fetchDialogue();
   };
 
-  // Reset game
+  const handleSendMessage = async (message: string) => {
+    if (isLoading || !message.trim()) return;
+
+    setActiveChoices(null);
+
+    // Add user message to chat
+    addMessage({
+      speaker: 'USER',
+      text: message
+    });
+
+    // Track in game state
+    gameState.addHistory({
+      sceneId: gameState.getState().sceneId,
+      choiceText: message,
+      isUserTyped: true
+    });
+
+    // Get response
+    await fetchDialogue(message);
+  };
+
   const handleReset = () => {
-    if (confirm('Are you sure you want to restart? Your progress will be lost.')) {
+    if (confirm('Reset the Neural Link? All progress will be lost.')) {
       gameState.reset();
+      setMessages([]);
+      setActiveReward(null);
+      setCurrentPortrait(null);
+      startGame();
     }
   };
 
   return (
-    <div className="app">
-      {/* Debug HUD (EPIC 3: shows flags) */}
-      <div className="debug-hud">
-        <div className="debug-hud-content">
-          <span className="debug-scene">Scene: {state.sceneId}</span>
-          <button onClick={handleReset} className="debug-reset">
-            Reset
-          </button>
+    <div className="terminal-game">
+      {/* Header */}
+      <header className="terminal-header">
+        <div className="header-title">
+          <span className="pulse">●</span>
+          <span>NEURAL_LINK</span>
         </div>
-        <div className="debug-flags">
-          {gameState.getFlagSummary().map(flag => (
-            <div key={flag.name} className="debug-flag">
-              <span className="debug-flag-name">{flag.name}:</span>
-              <span className="debug-flag-value">{flag.value}/10</span>
-              <div className="debug-flag-bar">
-                <div
-                  className="debug-flag-fill"
-                  style={{ width: `${flag.percentage}%` }}
-                />
-              </div>
+        <button className="reset-btn" onClick={handleReset}>
+          [RESET]
+        </button>
+      </header>
+
+      {/* Main Split Layout */}
+      <div className="terminal-main-layout">
+
+        {/* Left Panel: Visual Feed */}
+        <div className="left-panel">
+          <VisualFeed
+            portraitUrl={currentPortrait}
+            status={isLoading ? 'GENERATING' : currentPortrait ? 'CONNECTED' : 'IDLE'}
+          />
+        </div>
+
+        {/* Right Panel: Chat Interface */}
+        <div className="right-panel">
+          <div className="terminal-content">
+            {/* Chat log */}
+            <div className="chat-log">
+              {messages.map((msg, idx) => (
+                <div key={msg.id} className={`chat-message ${msg.speaker.toLowerCase()}`}>
+                  <span className="speaker-tag">[{msg.speaker}]</span>
+                  <span className="message-text">
+                    {msg.speaker === 'USER' || idx < messages.length - 1 ? (
+                      msg.text
+                    ) : (
+                      <TypewriterText text={msg.text} speed={5} />
+                    )}
+                  </span>
+                </div>
+              ))}
+
+              {isLoading && (
+                <div className="chat-message system">
+                  <span className="speaker-tag">[SYSTEM]</span>
+                  <span className="message-text typing">Processing...</span>
+                </div>
+              )}
+
+              <div ref={chatEndRef} />
             </div>
-          ))}
+
+            {/* Dynamic Choices */}
+            {activeChoices && (
+              <div className="choice-container">
+                {activeChoices.map(choice => (
+                  <button
+                    key={choice.id}
+                    className="choice-btn"
+                    onClick={() => handleChoice(choice)}
+                  >
+                    &gt; {choice.text}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Reward display */}
+          {activeReward && (
+            <div className="reward-container">
+              <RewardModule code={activeReward} />
+            </div>
+          )}
+
+          {/* Input */}
+          <div className="terminal-input-area">
+            <TerminalInput
+              onSendMessage={handleSendMessage}
+              disabled={isLoading}
+              placeholder="Enter your response..."
+            />
+          </div>
         </div>
       </div>
-
-      {/* Main game canvas (EPIC 1) */}
-      <GameCanvas scene={currentScene} onChoice={handleChoice} />
     </div>
   );
 }

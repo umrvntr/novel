@@ -11,7 +11,7 @@ import { dialogueRouter } from './routes/dialogue.js';
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 5174;
+const PORT = Number(process.env.PORT) || 5174;
 const HOST = process.env.HOST || '127.0.0.1';
 
 // Middleware
@@ -54,3 +54,6 @@ app.listen(PORT, HOST, () => {
     console.log(`✓ LLM Model: ${process.env.LLM_MODEL}`);
   }
 });
+
+
+

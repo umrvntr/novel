@@ -1,0 +1,1 @@
+{"text":"","choices":[{"id":"continue","text":"Continue","nextSceneId":"scene_02_curious","flagModifiers":{"curious":1},"style":"primary"},{"id":"ask_more","text":"Tell me more","nextSceneId":"scene_02_goal","flagModifiers":{"cautious":1},"style":"secondary"}],"usedLLM":true}
