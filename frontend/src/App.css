@@ -464,12 +464,26 @@
 @media (max-width: 768px) {
   .terminal-main-layout {
     flex-direction: column;
+    height: 100vh;
+    /* Ensure full viewport usage */
   }
 
   .left-panel {
-    flex: 0 0 250px;
-    /* Fixed height for image on mobile */
+    flex: 0 0 auto;
+    height: 40vh;
     border-right: none;
-    border-bottom: 1px solid #333;
+    border-bottom: 1px solid var(--panel-border);
+    /* Mobile brightness boost */
+    filter: brightness(1.2) contrast(1.1);
+  }
+
+  .terminal-content {
+    padding: 15px;
+    /* Reduce padding on mobile */
+  }
+
+  .feed-header {
+    padding: 5px 15px;
+    /* Compact header */
   }
 }

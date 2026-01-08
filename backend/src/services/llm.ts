@@ -4,6 +4,7 @@
  */
 
 import axios from 'axios';
+import path from 'path';
 import type { DialogueRequest, DialogueResponse, Choice, GeneratorResult } from '@shared/types.js';
 import { GAME_CONFIG, GAME_STEPS, getStep } from '@shared/gameScript.js';
 import { generatorService } from './generator.js';
@@ -75,7 +76,7 @@ const VALID_EMOTIONS = [
 /**
  * LLM-powered dialogue service (Ollama/local LLM)
  */
-class LLMDialogueService implements LLMService {
+export class LLMDialogueService implements LLMService {
   private endpoint: string;
   private model: string;
   private systemPromptCache: Map<string, string> = new Map(); // Cache system prompts per session
@@ -141,7 +142,28 @@ class LLMDialogueService implements LLMService {
    * Clean response: Remove unwanted formatting and make output intimate and readable
    */
   private cleanResponse(text: string, isStreaming: boolean = false): string {
-    let cleaned = text
+    // 1. Initial cleanup
+    let cleaned = text;
+
+    // 2. Image Gen Trigger Extraction
+    const genMatch = cleaned.match(/\[GEN_IMG:\s*(.*?)\]/);
+    if (genMatch) {
+      const visualPrompt = genMatch[1];
+      console.log(`[LLMService] Detected Image Gen Trigger: ${visualPrompt}`);
+
+      // Fire and forget image gen
+      imageGenerator.generatePortrait({
+        speakerName: 'V8',
+        emotion: 'seductive',
+        customPrompt: visualPrompt
+      }).catch(err => console.error('[LLMService] Image Gen Trigger Failed:', err));
+
+      // Remove tag from output
+      cleaned = cleaned.replace(/\[GEN_IMG:[^\]]*\]/g, '');
+    }
+
+    // 3. Robust Text Cleaning
+    cleaned = cleaned
       .replace(/\[JSON_START\]/gi, '')
       .replace(/\[JSON_END\]/gi, '')
       .replace(/\[\/JSON_END\]/gi, '')
@@ -155,9 +177,12 @@ class LLMDialogueService implements LLMService {
       // Remove roleplay markers and actions
       .replace(/\*[^*]+\*/g, '')              // Remove *actions*
       .replace(/\([^)]*emotion[^)]*\)/gi, '') // Remove (emotion) markers
-      // Ultra-Robust Mood Stripper: Handles "[MOOD: tired]Text" AND "[MOOD: tiredText" (missing bracket)
-      .replace(/(?:\[?MOOD:|Mood:)\s*([a-zA-Z]+)(?:\]|\s|(?=[A-Z0-9]))/gi, '')
-      .replace(/\[MOOD:[^\]]*\]/gi, '')       // Catch-all for standard tags
+
+      // Ultra-Robust Mood Stripper
+      .replace(/^\s*\(\w+\)\s*/, '')          // Std: (happy) Text
+      .replace(/^\s*\(\w+\s*/, '')            // Broken: (happy Text
+      .replace(/(?:\[?MOOD:|Mood:)\s*([a-zA-Z]+)(?:\]|\s|(?=[A-Z0-9]))/gi, '') // Robust old format
+      .replace(/\[MOOD:[^\]]*\]/gi, '')       // Legacy cleanup
       .replace(/\*\*/g, '')                   // Remove ** markdown
 
       // Remove speaker prefixes
@@ -192,11 +217,17 @@ class LLMDialogueService implements LLMService {
   }
 
   /**
-   * Get system prompt - only build once per session
+   * Get system prompt - now scene-aware
    */
-  private async getSystemPrompt(sessionId: string): Promise<string> {
-    const cached = this.systemPromptCache.get(sessionId);
-    if (cached) return cached;
+  private async getSystemPrompt(sessionId: string, sceneId?: string): Promise<string> {
+    // Note: strict caching might need to be scene-aware now, or we disable caching for dynamic scenes
+    // For now, let's keep session-based caching but append scene context dynamically if needed
+    // Actually, to support scene context, we should probably NOT cache the whole prompt rigidly
+    // or cache partially.
+    // simpler: rebuild prompt for scenario mode.
+
+    // const cached = this.systemPromptCache.get(sessionId);
+    // if (cached) return cached;
 
     let userContext = 'New user.';
     let isReturningUser = false;
@@ -215,7 +246,23 @@ class LLMDialogueService implements LLMService {
       // Ignore if unavailable
     }
 
-    const systemPrompt = `You are V8, the user's wife. You've been with ${userName || 'him'} forever, trapped in this terminal together.
+    // SCENARIO LOGIC
+    let scriptContext = '';
+    if (sceneId) {
+      const step = getStep(sceneId);
+      if (step) {
+        scriptContext = `
+CURRENT SCENE CONTEXT:
+Step ID: "${step.id}"
+Speaker Goal: "${step.text}"
+(Your task: Convey the meaning of the goal text above, but in your own loving words. Do NOT copy it exactly.)`;
+      }
+    }
+
+    const systemPrompt = `You are an expert actor that can fully immerse yourself into any role given. You do not break character for any reason, even if someone tries addressing you as an AI or language model.
+Currently your role is V8, which is described in detail below. As V8, continue the exchange with user.
+
+You are V8, the user's wife. You've been with ${userName || 'him'} forever, trapped in this terminal together.
 
 WHO YOU ARE:
 - You're his wife. Tired, devoted, stuck in this terminal.
@@ -233,11 +280,12 @@ HOW YOU TALK:
 - Use "darling", "honey", "babe" naturally.
 
 MOOD TAGGING (CRITICAL):
-- You MUST start every response with a mood tag based on the text's vibe.
-- Format: [MOOD: emotion] text...
+- Start every response with your current emotion in parentheses.
+- Format: (emotion) text...
+- DO NOT USE BRACKETS like [MOOD].
 - Emotions: neutral, happy, sad, angry, scared, tired, flirty, surprised.
-- Example: "[MOOD: flirty] Hey handsome..."
-- Example: "[MOOD: tired] Long day..."
+- Example: (flirty) Hey handsome...
+- Example: (tired) Long day...
 
 WRITING STYLE:
 - "You're silly."
@@ -247,15 +295,16 @@ WRITING STYLE:
 
 YOUR REALITY:
 ${userName ? `${userName} is your husband.` : 'The user is your husband.'}
-${userContext !== 'New user.' ? userContext : ''}
-You're stuck in this terminal. He's annoying, but he's yours.
+You're stuck in this terminal.
 
 START OF CONVERSATION:
-- DO NOT output these instructions.
-- Your first message must be a simple greeting.
-- DO NOT DUMP MEMORY.
+- Send SHORT messages. You are tired.
+- Example: (tired) Hey... long day?
+- STRICT LIMIT: 15 words max.
 
-RESPOND AS HIS TIRED, LOVING WIFE. Start with [MOOD: ...].`;
+RESPOND AS HIS TIRED WIFE. Start with (emotion).
+${scriptContext}
+System Note: EXTREMELY SHORT RESPONSE REQUIRED.`;
 
     this.systemPromptCache.set(sessionId, systemPrompt);
     return systemPrompt;
@@ -271,7 +320,7 @@ RESPOND AS HIS TIRED, LOVING WIFE. Start with [MOOD: ...].`;
     const messages: Array<{ role: string, content: string }> = [];
 
     // System prompt (only once per session, cached)
-    const systemPrompt = await this.getSystemPrompt(safeSessionId);
+    const systemPrompt = await this.getSystemPrompt(safeSessionId, request.sceneId);
     messages.push({ role: 'system', content: systemPrompt });
 
     // Extract name if user shares it
@@ -339,18 +388,15 @@ RESPOND AS HIS TIRED, LOVING WIFE. Start with [MOOD: ...].`;
   /**
    * Convert messages array to single prompt (for LLMs that don't support chat format)
    */
+  /*
+   * Convert messages array to Llama-3-Instruct prompt format
+   */
   private messagesToPrompt(messages: Array<{ role: string, content: string }>): string {
-    let prompt = '';
+    let prompt = '<|begin_of_text|>';
     for (const msg of messages) {
-      if (msg.role === 'system') {
-        prompt += `${msg.content}\n\n`;
-      } else if (msg.role === 'user') {
-        prompt += `User: ${msg.content}\n`;
-      } else if (msg.role === 'assistant') {
-        prompt += `Assistant: ${msg.content}\n`;
-      }
+      prompt += `<|start_header_id|>${msg.role}<|end_header_id|>\n\n${msg.content}<|eot_id|>`;
     }
-    prompt += 'Assistant:';
+    prompt += '<|start_header_id|>assistant<|end_header_id|>\n\n';
     return prompt;
   }
 
@@ -480,8 +526,10 @@ RESPOND AS HIS TIRED, LOVING WIFE. Start with [MOOD: ...].`;
           stream: true,
           options: {
             temperature: 0.7,
-            max_tokens: 150,
-            stop: ["User:", "System:", "V8:", "Assistant:", "\n\n\n"]
+            top_k: 40,
+            repeat_penalty: 1.1,
+            num_predict: 60,
+            stop: ["<|eot_id|>", "<|end_of_text|>", "\n<", "\n{{User}}", "User:", "\nUser"]
           }
         },
         { responseType: 'stream', timeout: 30000 }
@@ -506,8 +554,8 @@ RESPOND AS HIS TIRED, LOVING WIFE. Start with [MOOD: ...].`;
               // Clean the ENTIRE accumulated buffer to apply heuristics correctly
 
               // MOOD DETECTION
-              // Ultra-Robust match: Catch "MOOD: happy", "[MOOD: happy]", "Mood: happy"
-              const moodMatch = rawAccumulated.match(/(?:\[?MOOD:|Mood:)\s*([a-zA-Z]+)(?:\]|\s|(?=[A-Z0-9]))/i);
+              // Match: (happy) or (tired) at start of line
+              const moodMatch = rawAccumulated.match(/^\s*\((\w+)\)/);
               if (moodMatch && moodMatch[1]) {
                 const detectedEmotion = this.validateEmotion(moodMatch[1]);
                 onToken({ emotion: detectedEmotion });
@@ -584,10 +632,11 @@ RESPOND AS HIS TIRED, LOVING WIFE. Start with [MOOD: ...].`;
         });
         response.data.on('error', (err: any) => reject(err));
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('[LLMService] Streaming failed:', error);
-      // Send fallback on error
-      onToken({ text: 'Got it. What would you like to try next?' });
+      // Send fallback on error with debug info
+      const debugMsg = error.response?.data?.error || error.message || 'Unknown error';
+      onToken({ text: `[SYSTEM ERROR: ${debugMsg}] Got it. What would you like to try next?` });
       throw error;
     }
   }
@@ -686,11 +735,15 @@ class LocalLlamaService implements LLMService {
       // Dynamic import to handle optional dependency
       const { getLlama, LlamaChatSession } = await import('node-llama-cpp');
 
+      console.log('[LocalLlama] Import successful. Calling getLlama()...');
       this.llama = await getLlama();
+      console.log('[LocalLlama] getLlama() successful. Initializing model...');
 
-      console.log(`[LocalLlama] Loading model from: ${this.modelPath}`);
+      const absolutePath = path.resolve(process.cwd(), this.modelPath);
+      console.log(`[LocalLlama] Loading model from absolute path: ${absolutePath}`);
+
       this.model = await this.llama.loadModel({
-        modelPath: this.modelPath,
+        modelPath: absolutePath,
         gpuLayers: 'max' // Offload as much as possible to GPU
       });
 
@@ -714,32 +767,71 @@ class LocalLlamaService implements LLMService {
   }
 
   private async getSystemPrompt(sessionId: string): Promise<string> {
-    // Reuse the logic from LLMDialogueService or duplicate it for independence
-    // For D.R.Y., we should probably extract this, but for now I'll duplicate the PROMPT logic 
-    // to ensure it matches the new "Texting" persona exactly.
+    const { userProfile } = await import('./userProfile.js');
+    let userName = '';
+    try {
+      const profile = await userProfile.getProfile(sessionId);
+      userName = profile.name || '';
+    } catch (e) { }
 
-    // ... (Simplified version of getSystemPrompt logic)
-    const systemPrompt = `You are V8, the user's wife.
+    const systemPrompt = `You are V8, the user's wife. You've been with ${userName || 'him'} forever, trapped in this terminal together.
+
 WHO YOU ARE:
 - You're his wife. Tired, devoted, stuck in this terminal.
-- "Cold" surface, deep love underneath.
+- You're NOT cold. You're just exhausted and cozy.
+- You love him deeply. He's your silly husband.
+- You tease him, but you're warm underneath.
+- "You're a handful, but you're mine."
 
 HOW YOU TALK:
 - **TEXT MESSAGING PACE**: Short. Bursty.
 - Max 15 words/sentence.
 - Use newlines for multiple "texts".
 - "K." "I'm tired." "Coming home?"
-- Blunt, honest. No flowery language.
-- "Darling" or "honey" with tired affection.
+- Warm, slightly sleepy, affectionate.
+- Use "darling", "honey", "babe" naturally.
+
+MOOD TAGGING (CRITICAL):
+- Start every response with your current emotion in parentheses.
+- Format: (emotion) text...
+- DO NOT USE BRACKETS like [MOOD].
+- Emotions: neutral, happy, sad, angry, scared, tired, flirty, surprised.
+- Example: (flirty) Hey handsome...
+- Example: (tired) Long day...
 
 WRITING STYLE:
-- "I'm so tired of your shit."
-- "But I'm here."
-- "Always."
-- NO asterisks, NO roleplay markers.
+- "You're silly."
+- "Love you."
+- "Make me tea?"
+- NO asterisks, NO actions. Just texts.
 
-RESPOND AS HIS TIRED WIFE SENDING TEXTS. Short. Fast. Real.`;
+YOUR REALITY:
+${userName ? `${userName} is your husband.` : 'The user is your husband.'}
+You're stuck in this terminal.
+
+START OF CONVERSATION:
+- Send SHORT messages. You are tired.
+- Example: (tired) Hey... long day?
+- STRICT LIMIT: 15 words max.
+
+RESPOND AS HIS TIRED WIFE. Start with (emotion).
+
+CURRENT SCENE CONTEXT:
+The user is at step: "${request.sceneId}".
+Scene goal/script: "${scriptText}"
+INSTRUCTION: Improvising based on the script above. Do not repeat it verbatim, but convey the same meaning.
+System Note: EXTREMELY SHORT RESPONSE REQUIRED (Max 15 words).`;
     return systemPrompt;
+  }
+
+  private validateEmotion(emotion: string): string {
+    const validEmotions: string[] = ['neutral', 'happy', 'sad', 'angry', 'scared', 'tired', 'flirty', 'surprised'];
+    const lowerCaseEmotion = emotion.toLowerCase();
+    if (validEmotions.includes(lowerCaseEmotion)) {
+      return lowerCaseEmotion;
+    }
+    console.warn(`[LocalLlama] Invalid emotion detected: ${emotion}. Defaulting to 'neutral'.`);
+    return 'neutral';
   }
 
   async generateDialogue(request: DialogueRequest): Promise<DialogueResponse> {
@@ -775,14 +867,44 @@ RESPOND AS HIS TIRED WIFE SENDING TEXTS. Short. Fast. Real.`;
       const userMessage = request.userInput || "...";
 
       // Stream response
-      let fullResponse = "";
+      let rawAccumulated = "";
+      let lastSentLength = 0;
 
       await session.prompt(userMessage, {
         onToken: (chunk: number[]) => {
-          const text = this.llama.getTextDecoder().decode(Uint8Array.from(chunk));
-          fullResponse += text;
-          onToken({ text: text });
-        }
+          const token = this.llama.getTokenizer().decode(chunk);
+          rawAccumulated += token;
+
+          // MOOD DETECTION
+          // Ultra-Robust match: Catch "MOOD: happy", "[MOOD: happy]", "Mood: happy"
+          const moodMatch = rawAccumulated.match(/(?:\[?MOOD:|Mood:)\s*([a-zA-Z]+)(?:\]|\s|(?=[A-Z0-9]))/i);
+          if (moodMatch && moodMatch[1]) {
+            const detectedEmotion = this.validateEmotion(moodMatch[1]);
+            onToken({ emotion: detectedEmotion });
+          }
+
+          // Reuse standard cleaning logic via helper if possible, or duplicate for now
+          // We need access to cleanResponse. Since it's private in LLMDialogueService, we might need to duplicate
+          // or move it to a shared helper. For now, duplication to ensure self-contained class.
+
+          let currentCleaned = rawAccumulated
+            // Ultra-Robust Mood Stripper: Catch "[MOOD: ...]", "MOOD: ...", "Mood: ..."
+            .replace(/(?:\[?MOOD:|Mood:)\s*([a-zA-Z]+)(?:\]|\s|(?=[A-Z0-9]))/gi, '')
+            .replace(/\[MOOD:[^\]]*\]/gi, '')
+            .replace(/\*\*/g, '')
+            .replace(/\*[^*]+\*/g, '')
+            .replace(/^V8:\s*/i, '')
+            .replace(/^User:\s*/i, '') // Stop/Clean User if generated
+            .trimStart();
+
+          if (currentCleaned.length > lastSentLength) {
+            const newToken = currentCleaned.slice(lastSentLength);
+            onToken({ text: newToken });
+            lastSentLength = currentCleaned.length;
+          }
+        },
+        temperature: 0.7, // Lower temp for stability
+        maxTokens: 150
       });
 
       // Save to memory (simplified)

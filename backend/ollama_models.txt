@@ -1,7 +1,9 @@
-NAME                        ID              SIZE      MODIFIED     
-antonos9/roleplay:latest    0eb8c06e0423    3.8 GB    20 hours ago    
-gemma3:4b                   a2af6cc3eb7f    3.3 GB    21 hours ago    
-qwen2.5-coder:1.5b-base     02e0f2817a89    986 MB    2 weeks ago     
-gpt-oss:20b                 17052f91a42e    13 GB     7 weeks ago     
-andi2:latest                733485df5223    7.7 GB    4 months ago    
-andi:latest                 42d0a7a3fa2c    4.4 GB    4 months ago    
+NAME                                        ID              SIZE      MODIFIED      
+adi0adi/ollama_stheno-8b_v3.1_q6k:latest    2e09a0a33c6c    6.6 GB    9 minutes ago    
+mistral:latest                              6577803aa9a0    4.4 GB    3 hours ago      
+antonos9/roleplay:latest                    0eb8c06e0423    3.8 GB    25 hours ago     
+gemma3:4b                                   a2af6cc3eb7f    3.3 GB    27 hours ago     
+qwen2.5-coder:1.5b-base                     02e0f2817a89    986 MB    2 weeks ago      
+gpt-oss:20b                                 17052f91a42e    13 GB     7 weeks ago      
+andi2:latest                                733485df5223    7.7 GB    4 months ago     
+andi:latest                                 42d0a7a3fa2c    4.4 GB    4 months ago     

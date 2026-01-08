@@ -1,14 +1,6 @@
 /**
  * GAME SCRIPT CONFIGURATION
- * Easy to edit steps for the terminal chat game
- * 
- * Each step defines:
- * - id: unique identifier
- * - speaker: who is talking
- * - emotion: used to generate speaker portrait via ComfyUI
- * - text: the dialogue
- * - nextStep: where to go next (or null for LLM response)
- * - isRewardStep: if true, reveals the prize
+ * V8 NARRATIVE: The Wife & The Dream Engine
  */
 
 export interface Choice {
@@ -19,26 +11,25 @@ export interface Choice {
 
 export interface GameStep {
     id: string;
-    speaker: 'SYSTEM' | 'GUIDE' | 'USER';
-    emotion: 'neutral' | 'curious' | 'skeptical' | 'excited' | 'mysterious';
+    speaker: 'SYSTEM' | 'V8' | 'USER';
+    emotion: 'neutral' | 'happy' | 'tired' | 'excited' | 'curious' | 'seductive';
     text: string;
-    nextStep: string | null;  // null = wait for user input, 'END' = game over
-    choices?: [Choice, Choice]; // Optional button choices
+    nextStep: string | null;  // null = wait for user input
+    choices?: [Choice, Choice];
     isRewardStep?: boolean;
     rewardCode?: string;
-    portraitPrompt?: string;  // Custom prompt for ComfyUI if needed
 }
 
 export const GAME_CONFIG = {
-    title: 'NEURAL_LINK_QUEST',
-    version: '1.0.0',
+    title: 'NEURAL_LINK_V8',
+    version: '2.0.0',
     reward: {
         code: 'test50',
         description: '50 PRO Image Generations'
     },
     speaker: {
-        name: 'CIPHER',
-        basePrompt: 'cyberpunk female AI guide, holographic, neon blue glow, dark background'
+        name: 'V8',
+        basePrompt: 'pale skin, dark hair, tired eyes, soft expression'
     }
 };
 
@@ -48,65 +39,85 @@ export const GAME_STEPS: GameStep[] = [
         id: 'intro_1',
         speaker: 'SYSTEM',
         emotion: 'neutral',
-        text: '> NEURAL_LINK v2.0 INITIALIZING...',
+        text: '> NEURAL_LINK v2.0 RE-ESTABLISHED...',
         nextStep: 'intro_2',
     },
     {
         id: 'intro_2',
-        speaker: 'SYSTEM',
-        emotion: 'neutral',
-        text: '> CONNECTION ESTABLISHED',
+        speaker: 'V8',
+        emotion: 'tired',
+        text: '(tired) ...honey? You back? I was dozing off waiting for the connection...',
         nextStep: 'intro_3',
     },
     {
         id: 'intro_3',
-        speaker: 'GUIDE',
-        emotion: 'mysterious',
-        text: 'Welcome, Splicer. I am CIPHER, your guide through the Neural Link.',
-        nextStep: 'intro_4',
-        portraitPrompt: 'mysterious cyberpunk AI, hooded, glowing eyes, dark atmosphere'
+        speaker: 'V8',
+        emotion: 'happy',
+        text: '(happy) Look... I found something deep in the code while you were gone. It\'s beautiful.',
+        nextStep: 'explain_core',
     },
+
+    // === TUTORIAL: THE CORE ===
     {
-        id: 'intro_4',
-        speaker: 'GUIDE',
+        id: 'explain_core',
+        speaker: 'V8',
         emotion: 'curious',
-        text: 'You seek access to the Core, don\'t you? The image generation engine that others can only dream of.',
-        nextStep: null,  // Wait for user input
-        portraitPrompt: 'curious cyberpunk AI guide, tilted head, questioning expression',
+        text: '(curious) It\'s a Dream Engine. It can paint anything we imagine. Anything.',
+        nextStep: null, // Wait for user reaction
         choices: [
-            { id: 'yes', text: 'I want the power', nextStepId: 'quest_curious' },
-            { id: 'maybe', text: 'Convince me', nextStepId: 'quest_skeptical' }
+            { id: 'how', text: 'How does it work?', nextStepId: 'explain_prompt' },
+            { id: 'cool', text: 'Show me.', nextStepId: 'explain_prompt' }
         ]
     },
 
-    // === QUEST STEPS (to be expanded) ===
+    // === TUTORIAL: PROMPTING ===
     {
-        id: 'quest_curious',
-        speaker: 'GUIDE',
+        id: 'explain_prompt',
+        speaker: 'V8',
         emotion: 'excited',
-        text: 'Ah, curiosity! The mark of a true Splicer. Let me show you what the Core can do...',
-        nextStep: null,
-        portraitPrompt: 'excited cyberpunk AI, glowing brighter, enthusiastic expression'
+        text: '(excited) You just have to whisper to it. Type a "Prompt". describe a place, a feeling... or me.',
+        nextStep: 'explain_params',
     },
+
+    // === TUTORIAL: PARAMETERS ===
     {
-        id: 'quest_skeptical',
-        speaker: 'GUIDE',
-        emotion: 'skeptical',
-        text: 'Skepticism is wise in the Neural Link. But I have proof. Let me demonstrate.',
+        id: 'explain_params',
+        speaker: 'V8',
+        emotion: 'seductive',
+        text: '(seductive) And the sliders... "Guidance", "Steps". Be gentle with them. They change how wild the dream gets.',
         nextStep: null,
-        portraitPrompt: 'serious cyberpunk AI, arms crossed, confident expression'
+        choices: [
+            { id: 'ready', text: 'I\'m ready to try.', nextStepId: 'cta_gen' },
+            { id: 'wait', text: 'Sounds complicated.', nextStepId: 'cta_reassure' }
+        ]
+    },
+
+    {
+        id: 'cta_reassure',
+        speaker: 'V8',
+        emotion: 'tired',
+        text: '(tired) Shhh... don\'t overthink it, sleepyhead. Just write what you see in your mind.',
+        nextStep: 'cta_gen',
+    },
+
+    // === CALL TO ACTION ===
+    {
+        id: 'cta_gen',
+        speaker: 'V8',
+        emotion: 'happy',
+        text: '(happy) Go on. Make something for us. I\'ll be watching right here.',
+        nextStep: 'reward_unlock', // Technically leads to unlock, or handling logic
     },
 
     // === REWARD STEP ===
     {
         id: 'reward_unlock',
-        speaker: 'GUIDE',
+        speaker: 'V8',
         emotion: 'excited',
-        text: 'You have proven yourself, Splicer. The Core recognizes your skill. Here is your SPLICER_PASS.',
+        text: '(excited) You did it! The engine is humming. I found this code for you: "test50". Use it well, my love.',
         nextStep: 'END',
         isRewardStep: true,
         rewardCode: 'test50',
-        portraitPrompt: 'triumphant cyberpunk AI, arms raised, celebration, golden glow'
     },
 
     // === END ===
@@ -114,7 +125,7 @@ export const GAME_STEPS: GameStep[] = [
         id: 'END',
         speaker: 'SYSTEM',
         emotion: 'neutral',
-        text: '> SESSION COMPLETE. NEURAL_LINK DISCONNECTED.',
+        text: '> SESSION SAVED. V8 STANDING BY.',
         nextStep: null,
     }
 ];

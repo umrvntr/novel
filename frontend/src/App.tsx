@@ -12,7 +12,7 @@ import { gameState } from './engine/GameStateManager';
 import { Choice } from '@shared/gameScript';
 import './App.css';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5174';
+const API_URL = import.meta.env.VITE_API_URL || '';
 
 // Chat message type
 interface ChatMessage {
@@ -31,8 +31,17 @@ export function App() {
   const [activeReward, setActiveReward] = useState<string | null>(null);
   const [currentPortrait, setCurrentPortrait] = useState<string | null>(null);
   const [currentEmotion, setCurrentEmotion] = useState<string>('neutral');
+  const [connectionStatus, setConnectionStatus] = useState<'CONNECTED' | 'OFFLINE' | 'CONNECTING'>('CONNECTING');
   const chatEndRef = useRef<HTMLDivElement>(null);
   const hasInitialized = useRef(false);
+
+  // Initial connection check
+  useEffect(() => {
+    // fast ping to check status
+    fetch(`${API_URL}/api/health`)
+      .then(() => setConnectionStatus('CONNECTED'))
+      .catch(() => setConnectionStatus('OFFLINE'));
+  }, []);
 
   // Initialize game
   useEffect(() => {
@@ -192,11 +201,25 @@ export function App() {
           }
         }
       }
-    } catch (error) {
+      // Success - connected
+      setConnectionStatus('CONNECTED');
+
+    } catch (error: any) {
       console.error('Dialogue fetch failed:', error);
+      let errorMessage = 'Neural link unstable.';
+
+      if (error.message) {
+        if (error.message.includes('Failed to fetch')) {
+          errorMessage = 'CONNECTION LOST: Host unreachable.';
+        } else {
+          errorMessage = `ERROR: ${error.message}`;
+        }
+      }
+
+      setConnectionStatus('OFFLINE');
       addMessage({
         speaker: 'SYSTEM',
-        text: '> ERROR: Neural link unstable. Retrying...'
+        text: `> ${errorMessage} Retrying...`
       });
     } finally {
       setIsLoading(false);
@@ -278,9 +301,9 @@ export function App() {
         {/* Left Panel: Visual Feed */}
         <div className="left-panel">
           <VisualFeed
-            backgroundUrl={currentPortrait}
-            emotion={isLoading ? 'thinking' : (currentEmotion as any)}
-            status={isLoading ? 'GENERATING' : 'CONNECTED'}
+            backgroundUrl={null} // We could pull this from game state if needed
+            emotion={currentEmotion as any}
+            status={connectionStatus === 'OFFLINE' ? 'SCANNING' : 'CONNECTED'} // Map to VisualFeed status types
             geoCity={gameState.getGeoContext()?.city}
             sessionId={gameState.getSessionId()}
           />

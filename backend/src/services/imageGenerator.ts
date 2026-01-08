@@ -22,23 +22,21 @@ export interface PortraitResult {
 class ImageGeneratorService {
     private endpoint: string;
     private cache: Map<string, string> = new Map();
-    // Default ComfyUI port or custom image server port
-    private readonly OUTPUT_PORT = 8188;
+    // Updated to Port 3088 as requested
+    private readonly OUTPUT_PORT = 3088;
 
     constructor() {
-        // TODO: Replace with your ComfyUI endpoint
         this.endpoint = process.env.COMFYUI_ENDPOINT || `http://localhost:${this.OUTPUT_PORT}`;
     }
 
     /**
-     * Generate a speaker portrait based on emotion
-     * PLACEHOLDER: Insert your ComfyUI API call here
+     * Generate a speaker portrait based on emotion or custom prompt
      */
     async generatePortrait(request: PortraitRequest): Promise<PortraitResult> {
-        const cacheKey = `${request.speakerName}_${request.emotion}`;
+        const cacheKey = `${request.speakerName}_${request.emotion}_${request.customPrompt || ''}`;
 
-        // Check cache first
-        if (this.cache.has(cacheKey)) {
+        // Check cache first (skip for custom prompts)
+        if (!request.customPrompt && this.cache.has(cacheKey)) {
             return {
                 imageUrl: this.cache.get(cacheKey)!,
                 emotion: request.emotion,
@@ -48,27 +46,54 @@ class ImageGeneratorService {
 
         console.log(`[ImageGenerator] Generating portrait for: ${request.speakerName} (${request.emotion})`);
 
-        // === EPIC 2: PREPARE JSON PROMPT ===
-        const promptText = this.buildPrompt(request);
-        const comfyPayload = this.getComfyPayload(promptText);
+        // Build Prompt (append V8 LoRA if generic)
+        let promptText = request.customPrompt || this.buildPrompt(request);
 
-        // === MOCK EXTERNAL SERVER CONNECTION ===
-        // In the future, this will be an actual axios call to this.OUTPUT_PORT
-        console.log(`[ImageGenerator] >> MOCK SEND TO PORT ${this.OUTPUT_PORT} <<`);
-        console.log(`[ImageGenerator] Payload prepared:`, JSON.stringify(comfyPayload, null, 2));
+        // Ensure V8 LoRA is active for V8 requests
+        if (request.speakerName === 'V8' && !promptText.includes('v8')) {
+            promptText += ', <lora:v8:1.0>, high quality, masterpiece';
+        }
 
+        const payload = {
+            prompt: promptText,
+            negative_prompt: "bad quality, blurry, ugly",
+            width: 512,
+            height: 512,
+            steps: 20
+        };
 
-        // For now, return a placeholder
+        try {
+            console.log(`[ImageGenerator] Sending to ${this.endpoint}/prompt...`, payload);
+            // Real API Call
+            // Assuming the endpoint returns { image: "base64..." } or { url: "..." }
+            // For now, fire and forget or expect a URL.
+            // If the user says "receives back a pic", it might be a blob.
+            // Let's assume it returns a JSON with a URL or we just log it for now.
+            // SKELETON IMPLEMENTATION:
+            /*
+            const response = await axios.post(`${this.endpoint}/prompt`, payload);
+            if (response.data && response.data.image) {
+                return { ...result, imageUrl: response.data.image };
+            }
+            */
+
+            // MOCK UNTIL API SHAPE CONFIRMED:
+            // Simulate successful generation trigger
+        } catch (error) {
+            console.error('[ImageGenerator] Failed to generate:', error);
+        }
+
+        // Fallback/Mock return
         const placeholderUrl = this.getPlaceholderUrl(request);
-
-        // Cache the result
-        this.cache.set(cacheKey, placeholderUrl);
+        if (!request.customPrompt) {
+            this.cache.set(cacheKey, placeholderUrl);
+        }
 
         return {
             imageUrl: placeholderUrl,
             emotion: request.emotion,
             cached: false,
-            debugPrompt: comfyPayload
+            debugPrompt: payload
         };
     }
 
