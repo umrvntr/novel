@@ -113,9 +113,16 @@ class LLMDialogueService implements LLMService {
    */
   private cleanResponse(text: string): string {
     return text
+      .replace(/\[JSON_START\]/gi, '')
+      .replace(/\[JSON_END\]/gi, '')
+      .replace(/\[\/JSON_END\]/gi, '')
       .replace(/\*[^*]+\*/g, '')              // Remove *actions*
       .replace(/\([^)]*emotion[^)]*\)/gi, '') // Remove (emotion) markers
-      .replace(/\s+/g, ' ')                   // Normalize whitespace
+      .replace(/^V8:\s*"/i, '')               // Strip prefix quotes
+      .replace(/^V8:\s*/i, '')                // Strip redundant V8: prefix
+      .replace(/^GUIDE:\s*/i, '')             // Strip redundant GUIDE: prefix
+      .replace(/"$/, '')                      // Trailing quote
+      .replace(/\s+/g, ' ')                   // Normalize workspace/missing spaces
       .trim();
   }
 
@@ -250,15 +257,21 @@ You MUST respond with a JSON block followed by your dialogue.
 }
 [JSON_END]
 
-V8: "Your dialogue here. Keep it character-consistent."
+Your dialogue response here. 
+CRITICAL: 
+- DO NOT prefix your response with "V8:". 
+- DO NOT use roleplay markers or asterisks.
+- YOU MUST USE SPACES BETWEEN WORDS. No compressed text.
+- 2-3 sentences max.
 
 STRICT RULES:
 1. NO asterisks (*action*).
-2. NO roleplay markers.
+2. NO roleplay markers or V8 prefixes.
 3. Max 3 sentences.
 4. Always wrap metadata in [JSON_START] and [JSON_END].
-5. Use proper spacing and punctuation. No compressed text.
-6. STRICTURE: Only use emotions from the approved list in the 'intent' field. DO NOT make up new ones.`;
+5. CRITICAL: Use proper spacing between words. NO COMPRESSED TEXT.
+6. STRICTURE: Only use emotions from the approved list in the 'intent' field. DO NOT make up new ones.
+7. ABSOLUTE: Do not let technical markers like '[JSON_END]' leak into your dialogue response.`;
   }
 
   private async callLLM(prompt: string): Promise<string> {
@@ -333,6 +346,7 @@ STRICT RULES:
 
       let metadataBuffer = '';
       let responseTextBuffer = '';
+      let remainingTokenBuffer = ''; // Sprint 5: Buffer for sensitive chars
       let isMetadataParsed = false;
       let streamedCharCount = 0;
 
@@ -413,15 +427,6 @@ STRICT RULES:
                     // Flush anything after JSON block as text
                     let trailingText = metadataBuffer.substring(metadataBuffer.lastIndexOf('}') + 1).trim();
                     if (trailingText) {
-                      // Strip markers that might have leaked into trailing text
-                      trailingText = trailingText
-                        .replace(/\[JSON_START\]/gi, '')
-                        .replace(/\[JSON_END\]/gi, '')
-                        .replace(/\[\/JSON_END\]/gi, '')
-                        .replace(/V8:\s*"/i, '')
-                        .replace(/V8:\s*/i, '')
-                        .replace(/"$/, '');
-
                       const cleaned = this.cleanResponse(trailingText);
                       if (cleaned) {
                         onToken({ text: cleaned });
@@ -443,12 +448,24 @@ STRICT RULES:
                 }
               } else {
                 // Streaming text phase
-                // Clean asterisks and unwanted markers from token
-                const cleanToken = this.cleanResponse(token.replace(/`|json/g, ''));
-                if (cleanToken || token === ' ') {
-                  const t = cleanToken || ' ';
-                  onToken({ text: t });
-                  responseTextBuffer += t;
+                // Guard: Prevent partial markers ([ or /) from leaking
+                if (token.includes('[') || token.includes('/') || token.includes(']')) {
+                  // Buffer sensitive chars to see if they form a marker
+                  remainingTokenBuffer += token;
+                  const cleaned = this.cleanResponse(remainingTokenBuffer);
+                  if (cleaned && !remainingTokenBuffer.includes('[')) {
+                    onToken({ text: cleaned });
+                    responseTextBuffer += cleaned;
+                    remainingTokenBuffer = '';
+                  }
+                } else {
+                  const combined = remainingTokenBuffer + token;
+                  const cleanToken = this.cleanResponse(combined);
+                  if (cleanToken || token === ' ') {
+                    onToken({ text: cleanToken || ' ' });
+                    responseTextBuffer += cleanToken || ' ';
+                    remainingTokenBuffer = '';
+                  }
                 }
               }
             }
