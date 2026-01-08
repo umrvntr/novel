@@ -1,24 +1,21 @@
 .terminalContainer {
   width: 100%;
-  padding: 1rem;
-  background: rgba(0, 20, 0, 0.8);
-  border: 1px solid #00ff41;
-  border-radius: 4px;
-  box-shadow: 0 0 10px rgba(0, 255, 65, 0.2);
-  margin-top: 1rem;
+  padding: 0;
+  background: transparent;
+  border: none;
   font-family: 'Courier New', Courier, monospace;
 }
 
 .prompt {
   display: flex;
-  align-items: center;
-  gap: 0.5rem;
+  align-items: baseline;
+  gap: 1rem;
 }
 
 .symbol {
-  color: #00ff41;
+  color: var(--primary, #00ff41);
   font-weight: bold;
-  text-shadow: 0 0 5px #00ff41;
+  opacity: 0.5;
 }
 
 .input {
@@ -26,14 +23,16 @@
   background: transparent;
   border: none;
   outline: none;
-  color: #00ff41;
+  color: #fff;
   font-family: inherit;
-  font-size: 1.1rem;
+  font-size: 1rem;
   letter-spacing: 1px;
 }
 
 .input::placeholder {
-  color: rgba(0, 255, 65, 0.3);
+  color: var(--text-dim, #888);
+  font-style: italic;
+  font-size: 0.9rem;
 }
 
 .cursor {
@@ -42,8 +41,15 @@
 }
 
 @keyframes blink {
-  from, to { opacity: 1; }
-  50% { opacity: 0; }
+
+  from,
+  to {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0;
+  }
 }
 
 .input:disabled {

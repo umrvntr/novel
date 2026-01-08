@@ -14,6 +14,16 @@ export class GeneratorService {
         this.checkConnection();
     }
     /**
+     * Get current connection status for Ping API
+     */
+    async getHealthStatus() {
+        await this.checkConnection();
+        return {
+            connected: this.isConnected,
+            endpoint: UMRGEN_ENDPOINT
+        };
+    }
+    /**
      * Check if umrgen server is available
      */
     async checkConnection() {
@@ -22,9 +32,16 @@ export class GeneratorService {
             this.isConnected = true;
             console.log(`[Generator] Connected to umrgen at ${UMRGEN_ENDPOINT}`);
         }
-        catch {
-            this.isConnected = false;
-            console.warn(`[Generator] umrgen not available at ${UMRGEN_ENDPOINT}, using fallback`);
+        catch (error) {
+            // If we get a response (even 404), the server is alive
+            if (error.response) {
+                this.isConnected = true;
+                console.log(`[Generator] Connected to umrgen at ${UMRGEN_ENDPOINT} (Server alive, /health missing)`);
+            }
+            else {
+                this.isConnected = false;
+                console.warn(`[Generator] umrgen not available at ${UMRGEN_ENDPOINT}, using fallback`);
+            }
         }
     }
     /**

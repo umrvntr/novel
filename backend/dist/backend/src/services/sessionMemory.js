@@ -73,6 +73,10 @@ class SessionMemoryService {
             ...entry,
             timestamp: entry.timestamp || Date.now()
         });
+        // Auto-summary if history gets long
+        if (memory.entries.length > 50 && (!memory.lastUpdated || Date.now() - memory.lastUpdated > 1000 * 60 * 60)) {
+            memory.summary = await this.generateSummary(sessionId);
+        }
         // Keep last 100 entries
         if (memory.entries.length > 100) {
             memory.entries = memory.entries.slice(-100);
@@ -91,6 +95,25 @@ class SessionMemoryService {
         return recent
             .map(e => `[${e.type}] ${e.content}`)
             .join('\n');
+    }
+    /**
+     * Update scene cache for session
+     */
+    async updateCache(sessionId, sceneId, responseText) {
+        let memory = await this.getMemory(sessionId);
+        if (!memory) {
+            memory = {
+                sessionId,
+                createdAt: Date.now(),
+                lastUpdated: Date.now(),
+                entries: [],
+                sceneCache: {}
+            };
+        }
+        if (!memory.sceneCache)
+            memory.sceneCache = {};
+        memory.sceneCache[sceneId] = responseText;
+        await this.saveMemory(sessionId, memory);
     }
     /**
      * Generate summary of session (for long-term memory)

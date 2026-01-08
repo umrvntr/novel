@@ -7,6 +7,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { dialogueRouter } from './routes/dialogue.js';
 import { sessionRouter } from './routes/session.js';
+import { generatorRouter } from './routes/generator.js';
 dotenv.config();
 const app = express();
 const PORT = Number(process.env.PORT) || 5174;
@@ -22,6 +23,7 @@ app.use((req, res, next) => {
 // Routes
 app.use('/api/dialogue', dialogueRouter);
 app.use('/api/init-session', sessionRouter);
+app.use('/api/generator', generatorRouter);
 // Health check
 app.get('/api/health', (req, res) => {
     res.json({

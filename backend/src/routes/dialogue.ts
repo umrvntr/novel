@@ -26,13 +26,10 @@ dialogueRouter.post('/', async (req, res) => {
   try {
     const request = req.body as DialogueRequest;
 
-    // Validate request
-    if (!request.sceneId || !request.flags || !request.history) {
-      return res.status(400).json({
-        error: 'Invalid request',
-        message: 'Missing required fields: sceneId, flags, history'
-      });
-    }
+    // Provide defaults for optional fields
+    if (!request.sceneId) request.sceneId = 'chat';
+    if (!request.flags) request.flags = { curious: 0, cautious: 0, goal_oriented: 0 };
+    if (!request.history) request.history = [];
 
     // Get LLM service
     const llmService = getLLMService();
@@ -56,6 +53,11 @@ dialogueRouter.post('/', async (req, res) => {
 dialogueRouter.post('/stream', async (req, res) => {
   try {
     const request = req.body as DialogueRequest;
+
+    // Provide defaults for optional fields
+    if (!request.sceneId) request.sceneId = 'chat';
+    if (!request.flags) request.flags = { curious: 0, cautious: 0, goal_oriented: 0 };
+    if (!request.history) request.history = [];
 
     // SSE Headers
     res.setHeader('Content-Type', 'text/event-stream');
