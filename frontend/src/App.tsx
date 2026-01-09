@@ -32,12 +32,32 @@ export function App() {
   const [currentPortrait, setCurrentPortrait] = useState<string | null>(null);
   const [currentEmotion, setCurrentEmotion] = useState<string>('neutral');
   const [connectionStatus, setConnectionStatus] = useState<'CONNECTED' | 'OFFLINE' | 'CONNECTING'>('CONNECTING');
+  const [generatedImage, setGeneratedImage] = useState<string | null>(null);
+  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+  const [locationBackground, setLocationBackground] = useState<string | null>(null);
+  const [geoCity, setGeoCity] = useState<string>('');
+  const [imageQueuePosition, setImageQueuePosition] = useState<number>(0);
+  const [imageETA, setImageETA] = useState<number>(0);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const hasInitialized = useRef(false);
 
+  // LOGIC: Image Dismissal (manual and auto)
+  const handleDismissImage = () => {
+    setGeneratedImage(null);
+  };
+
+  // Auto-dismiss generated image after 25 seconds
+  useEffect(() => {
+    if (generatedImage) {
+      const timer = setTimeout(() => {
+        setGeneratedImage(null);
+      }, 25000);
+      return () => clearTimeout(timer);
+    }
+  }, [generatedImage]);
+
   // Initial connection check
   useEffect(() => {
-    // fast ping to check status
     fetch(`${API_URL}/api/health`)
       .then(() => setConnectionStatus('CONNECTED'))
       .catch(() => setConnectionStatus('OFFLINE'));
@@ -55,14 +75,50 @@ export function App() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  const addMessage = (msg: Omit<ChatMessage, 'id' | 'timestamp'>) => {
+    setMessages(prev => [...prev, {
+      ...msg,
+      id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      timestamp: Date.now()
+    }]);
+  };
+
+  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+  const pollForBackground = async () => {
+    let attempts = 0;
+    const maxAttempts = 30; // 60 seconds total
+
+    const check = async () => {
+      if (attempts >= maxAttempts) return;
+      try {
+        const res = await fetch(`${API_URL}/api/init-session/background/${gameState.getSessionId()}`);
+        const data = await res.json();
+        if (data.ready && data.backgroundUrl) {
+          setLocationBackground(data.backgroundUrl);
+          setIsGeneratingImage(false);
+          setImageQueuePosition(0);
+          setImageETA(0);
+          console.log('[App] Auto-background manifest complete');
+        } else {
+          attempts++;
+          setTimeout(check, 2000);
+        }
+      } catch (e) {
+        console.warn('[App] Background poll failed', e);
+        attempts++;
+        setTimeout(check, 2000);
+      }
+    };
+    check();
+  };
+
   const startGame = async () => {
-    // Add system intro
     addMessage({
       speaker: 'SYSTEM',
       text: '> NEURAL_LINK v2.0 INITIALIZING...'
     });
 
-    // Initialize session with geo-context (V8 Sprint 1)
     try {
       const initResponse = await fetch(`${API_URL}/api/init-session`, {
         method: 'POST',
@@ -73,6 +129,7 @@ export function App() {
       if (initResponse.ok) {
         const data = await initResponse.json();
         gameState.setGeoContext(data.geoData);
+        setGeoCity(data.geoData.city);
         if (data.currentMood) {
           setCurrentEmotion(data.currentMood);
         }
@@ -95,23 +152,26 @@ export function App() {
 
     await delay(500);
 
-    // Get initial dialogue from backend
+    addMessage({
+      speaker: 'GUIDE',
+      text: '(happy) Hello there, lovely! Welcome to our little corner of the digital universe. ✨'
+    });
+
+    await delay(1000);
+
+    addMessage({
+      speaker: 'GUIDE',
+      text: '(excited) I\'ve already started scanning your coordinates... I\'m painting your city in the sky right now. I hope you like the view. 🌆'
+    });
+
+    pollForBackground();
+
+    await delay(2000);
     await fetchDialogue();
   };
 
-  const addMessage = (msg: Omit<ChatMessage, 'id' | 'timestamp'>) => {
-    setMessages(prev => [...prev, {
-      ...msg,
-      id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      timestamp: Date.now()
-    }]);
-  };
-
-  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
   const fetchDialogue = async (userInput?: string) => {
     setIsLoading(true);
-
     const sessionId = gameState.getSessionId();
 
     try {
@@ -131,7 +191,6 @@ export function App() {
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
-
       const currentMsgId = `msg_${Date.now()}`;
       let textContent = '';
       let hasAddedMessage = false;
@@ -148,79 +207,57 @@ export function App() {
           if (line.startsWith('data: ')) {
             try {
               const data = JSON.parse(line.slice(6));
-
-              // Parallel Metadata Processing
               if (data.portraitUrl) setCurrentPortrait(data.portraitUrl);
               if (data.emotion) pendingEmotion = data.emotion;
               if (data.rewardCode) setActiveReward(data.rewardCode);
               if (data.choices) setActiveChoices(data.choices);
 
-              if (data.detectedIntent) {
-                const flagMap: Record<string, any> = {
-                  curious: { curious: 1 },
-                  cautious: { cautious: 1 },
-                  goal_oriented: { goal_oriented: 1 }
-                };
-                if (flagMap[data.detectedIntent]) {
-                  gameState.updateFlags(flagMap[data.detectedIntent]);
+              if (data.imageGenerating !== undefined) {
+                setIsGeneratingImage(data.imageGenerating);
+                if (!data.imageGenerating) {
+                  setImageQueuePosition(0);
+                  setImageETA(0);
                 }
               }
+              if (data.imageQueuePosition !== undefined) setImageQueuePosition(data.imageQueuePosition);
+              if (data.imageEstimatedTime !== undefined) setImageETA(data.imageEstimatedTime);
+              if (data.generatedImage) {
+                setGeneratedImage(data.generatedImage);
+                setIsGeneratingImage(false);
+                setImageQueuePosition(0);
+                setImageETA(0);
+              }
+              if (data.imageError) setIsGeneratingImage(false);
 
-              if (data.suggestedNextSceneId) {
-                gameState.setSceneId(data.suggestedNextSceneId);
+              if (data.detectedIntent) {
+                const flagMap: any = { curious: { curious: 1 }, cautious: { cautious: 1 }, goal_oriented: { goal_oriented: 1 } };
+                if (flagMap[data.detectedIntent]) gameState.updateFlags(flagMap[data.detectedIntent]);
               }
 
-              // Text Streaming
+              if (data.suggestedNextSceneId) gameState.setSceneId(data.suggestedNextSceneId);
+
               if (data.text) {
-                // Apply emotion only when text starts arriving
                 if (pendingEmotion) {
                   setCurrentEmotion(pendingEmotion);
                   pendingEmotion = null;
                 }
-
                 textContent += data.text;
-
                 if (!hasAddedMessage) {
-                  setMessages(prev => [...prev, {
-                    id: currentMsgId,
-                    speaker: 'GUIDE',
-                    text: textContent,
-                    timestamp: Date.now(),
-                    emotion: data.emotion || 'neutral'
-                  }]);
+                  setMessages(prev => [...prev, { id: currentMsgId, speaker: 'GUIDE', text: textContent, timestamp: Date.now(), emotion: data.emotion || 'neutral' }]);
                   hasAddedMessage = true;
                 } else {
-                  setMessages(prev => prev.map(m =>
-                    m.id === currentMsgId ? { ...m, text: textContent } : m
-                  ));
+                  setMessages(prev => prev.map(m => m.id === currentMsgId ? { ...m, text: textContent } : m));
                 }
               }
-            } catch (e) {
-              // Ignore partial JSON
-            }
+            } catch (e) { }
           }
         }
       }
-      // Success - connected
       setConnectionStatus('CONNECTED');
-
     } catch (error: any) {
       console.error('Dialogue fetch failed:', error);
-      let errorMessage = 'Neural link unstable.';
-
-      if (error.message) {
-        if (error.message.includes('Failed to fetch')) {
-          errorMessage = 'CONNECTION LOST: Host unreachable.';
-        } else {
-          errorMessage = `ERROR: ${error.message}`;
-        }
-      }
-
       setConnectionStatus('OFFLINE');
-      addMessage({
-        speaker: 'SYSTEM',
-        text: `> ${errorMessage} Retrying...`
-      });
+      addMessage({ speaker: 'SYSTEM', text: `> NEURAL_LINK UNSTABLE. Retrying...` });
     } finally {
       setIsLoading(false);
     }
@@ -228,47 +265,18 @@ export function App() {
 
   const handleChoice = async (choice: Choice) => {
     if (isLoading) return;
-
     setActiveChoices(null);
-
-    // Add choice to chat history
-    addMessage({
-      speaker: 'USER',
-      text: choice.text
-    });
-
-    // Update game state
-    gameState.addHistory({
-      sceneId: gameState.getState().sceneId,
-      choiceId: choice.id,
-      choiceText: choice.text
-    });
-
+    addMessage({ speaker: 'USER', text: choice.text });
+    gameState.addHistory({ sceneId: gameState.getState().sceneId, choiceId: choice.id, choiceText: choice.text });
     gameState.setSceneId(choice.nextStepId);
-
-    // Fetch next step results
     await fetchDialogue();
   };
 
   const handleSendMessage = async (message: string) => {
     if (isLoading || !message.trim()) return;
-
     setActiveChoices(null);
-
-    // Add user message to chat
-    addMessage({
-      speaker: 'USER',
-      text: message
-    });
-
-    // Track in game state
-    gameState.addHistory({
-      sceneId: gameState.getState().sceneId,
-      choiceText: message,
-      isUserTyped: true
-    });
-
-    // Get response
+    addMessage({ speaker: 'USER', text: message });
+    gameState.addHistory({ sceneId: gameState.getState().sceneId, choiceText: message, isUserTyped: true });
     await fetchDialogue(message);
   };
 
@@ -284,89 +292,63 @@ export function App() {
 
   return (
     <div className="terminal-game">
-      {/* Header */}
       <header className="terminal-header">
-        <div className="header-title">
+        <div className="header-status">
           <span className="pulse">●</span>
           <span>NEURAL_LINK</span>
         </div>
-        <button className="reset-btn" onClick={handleReset}>
-          [RESET]
-        </button>
+        <button className="reset-btn" onClick={handleReset}>[RESET]</button>
       </header>
 
-      {/* Main Split Layout */}
       <div className="terminal-main-layout">
-
-        {/* Left Panel: Visual Feed */}
         <div className="left-panel">
           <VisualFeed
-            backgroundUrl={null} // We could pull this from game state if needed
+            backgroundUrl={locationBackground}
             emotion={currentEmotion as any}
-            status={connectionStatus === 'OFFLINE' ? 'SCANNING' : 'CONNECTED'} // Map to VisualFeed status types
-            geoCity={gameState.getGeoContext()?.city}
+            status={connectionStatus === 'OFFLINE' ? 'SCANNING' : 'CONNECTED'}
+            geoCity={geoCity}
             sessionId={gameState.getSessionId()}
+            generatedImage={generatedImage}
+            isGenerating={isGeneratingImage}
+            queuePosition={imageQueuePosition}
+            eta={imageETA}
+            onDismissImage={handleDismissImage}
           />
         </div>
 
-        {/* Right Panel: Chat Interface */}
         <div className="right-panel">
           <div className="terminal-content">
-            {/* Chat log */}
             <div className="chat-log">
               {messages.map((msg, idx) => (
                 <div key={msg.id} className={`chat-message ${msg.speaker.toLowerCase()}`}>
                   <span className="speaker-tag">[{msg.speaker}]</span>
                   <span className="message-text">
-                    {msg.speaker === 'USER' || idx < messages.length - 1 ? (
-                      msg.text
-                    ) : (
-                      <TypewriterText text={msg.text} speed={5} />
-                    )}
+                    {msg.speaker === 'USER' || idx < messages.length - 1 ? msg.text : <TypewriterText text={msg.text} speed={5} />}
                   </span>
                 </div>
               ))}
-
               {isLoading && (
                 <div className="chat-message system">
                   <span className="speaker-tag">[SYSTEM]</span>
                   <span className="message-text typing">Processing...</span>
                 </div>
               )}
-
               <div ref={chatEndRef} />
             </div>
 
-            {/* Dynamic Choices */}
             {activeChoices && (
               <div className="choice-container">
                 {activeChoices.map(choice => (
-                  <button
-                    key={choice.id}
-                    className="choice-btn"
-                    onClick={() => handleChoice(choice)}
-                  >
-                    &gt; {choice.text}
-                  </button>
+                  <button key={choice.id} className="choice-btn" onClick={() => handleChoice(choice)}>&gt; {choice.text}</button>
                 ))}
               </div>
             )}
           </div>
 
-          {/* Reward display */}
-          {activeReward && (
-            <div className="reward-container">
-              <RewardModule code={activeReward} />
-            </div>
-          )}
+          {activeReward && <div className="reward-container"><RewardModule code={activeReward} /></div>}
 
-          {/* Input */}
           <div className="terminal-input-area">
-            <TerminalInput
-              onSendMessage={handleSendMessage}
-              disabled={isLoading}
-              placeholder="Enter your response..."
-            />
+            <TerminalInput onSendMessage={handleSendMessage} disabled={isLoading} placeholder="Enter your response..." />
           </div>
         </div>
       </div>

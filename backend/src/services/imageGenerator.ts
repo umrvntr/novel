@@ -9,13 +9,16 @@ export interface PortraitRequest {
     emotion: string;
     customPrompt?: string;
     speakerName: string;
+    width?: number;
+    height?: number;
+    onProgress?: (progress: { queuePosition: number; eta: number }) => void;
 }
 
 export interface PortraitResult {
     imageUrl: string;
     emotion: string;
     cached: boolean;
-    // New field for Epic 2: Debug info about the generated prompt
+    status?: 'success' | 'error' | 'timeout';
     debugPrompt?: any;
 }
 
@@ -49,59 +52,123 @@ class ImageGeneratorService {
         // Build Prompt (append V8 LoRA if generic)
         let promptText = request.customPrompt || this.buildPrompt(request);
 
-        // Ensure V8 LoRA is active for V8 requests
-        if (request.speakerName === 'V8' && !promptText.includes('v8')) {
-            promptText += ', <lora:v8:1.0>, high quality, masterpiece';
-        }
-
         // Prompt Truncation (Stability Fix)
-        // User reported hangs with large text blocks.
         if (promptText.length > 1000) {
             console.warn('[ImageGenerator] Truncating prompt to 1000 chars');
             promptText = promptText.substring(0, 1000);
         }
 
+        // UMRGEN API payload - requires session_id in sid_XXX format
+        const sessionId = `sid_${Date.now().toString(36)}`;
         const payload = {
             prompt: promptText,
-            negative_prompt: "bad quality, blurry, ugly", // Typically short, but ensuring < 500 chars
-            width: 512,
-            height: 512,
-            steps: 20
+            negative: 'bad quality, blurry, ugly, deformed',
+            session_id: sessionId,
+            width: request.width || 512,
+            height: request.height || 512
         };
 
         try {
-            console.log(`[ImageGenerator] Sending to ${this.endpoint}/prompt...`, payload);
-            // Real API Call
-            // Assuming the endpoint returns { image: "base64..." } or { url: "..." }
-            // For now, fire and forget or expect a URL.
-            // If the user says "receives back a pic", it might be a blob.
-            // Let's assume it returns a JSON with a URL or we just log it for now.
-            // SKELETON IMPLEMENTATION:
-            /*
-            const response = await axios.post(`${this.endpoint}/prompt`, payload);
-            if (response.data && response.data.image) {
-                return { ...result, imageUrl: response.data.image };
+            console.log(`[ImageGenerator] Sending to ${this.endpoint}/api/generate...`);
+
+            const axios = (await import('axios')).default;
+
+            // Step 1: Queue the job
+            const queueResponse = await axios.post(
+                `${this.endpoint}/api/generate`,
+                payload,
+                { timeout: 10000 }
+            );
+
+            const jobId = queueResponse.data?.job_id;
+            if (!jobId) {
+                console.warn('[ImageGenerator] No job_id returned');
+                return {
+                    imageUrl: this.getPlaceholderUrl(request),
+                    emotion: request.emotion,
+                    cached: false,
+                    status: 'error' as const
+                };
             }
-            */
 
-            // MOCK UNTIL API SHAPE CONFIRMED:
-            // Simulate successful generation trigger
-        } catch (error) {
-            console.error('[ImageGenerator] Failed to generate:', error);
+            console.log(`[ImageGenerator] Job queued: ${jobId}`);
+
+            // Step 2: Poll for completion (max 3 minutes)
+            const maxPolls = 90;  // 90 × 2s = 180 seconds = 3 minutes
+            const pollInterval = 2000;
+
+            for (let i = 0; i < maxPolls; i++) {
+                await new Promise(r => setTimeout(r, pollInterval));
+
+                const statusResponse = await axios.get(
+                    `${this.endpoint}/api/job/${jobId}/status`,
+                    { timeout: 5000 }
+                );
+
+                const status = statusResponse.data;
+                console.log(`[ImageGenerator] Job ${jobId} state: ${status.state}`);
+
+                // REPORT PROGRESS: If queue data is available, trigger callback
+                if (status.state === 'pending' || status.state === 'running') {
+                    if (request.onProgress) {
+                        request.onProgress({
+                            queuePosition: status.queue_position || 0,
+                            eta: status.estimated_time || 0
+                        });
+                    }
+                }
+
+                if (status.state === 'completed' && status.results?.images?.length > 0) {
+                    const imageUrl = status.results.images[0].url;
+                    // Construct full local URL
+                    const localUrl = imageUrl.startsWith('http')
+                        ? imageUrl
+                        : `${this.endpoint}${imageUrl}`;
+
+                    // WRAP IN PROXY: Return a URL that points to our backend's own proxy
+                    // This allows remote devices (via ngrok) to see the image
+                    const fullUrl = `/api/generator/image-proxy?url=${encodeURIComponent(localUrl)}`;
+
+                    console.log('[ImageGenerator] Image proxied successfully:', fullUrl);
+                    return {
+                        imageUrl: fullUrl,
+                        emotion: request.emotion,
+                        cached: false,
+                        status: 'success' as const
+                    };
+                }
+
+                if (status.state === 'failed') {
+                    console.warn('[ImageGenerator] Job failed:', status.error);
+                    return {
+                        imageUrl: this.getPlaceholderUrl(request),
+                        emotion: request.emotion,
+                        cached: false,
+                        status: 'error' as const
+                    };
+                }
+            }
+
+            // Timeout
+            console.warn('[ImageGenerator] Job polling timeout');
+            return {
+                imageUrl: this.getPlaceholderUrl(request),
+                emotion: request.emotion,
+                cached: false,
+                status: 'timeout' as const
+            };
+
+        } catch (error: any) {
+            const errorMsg = error.code === 'ECONNABORTED' ? 'timeout' : error.message;
+            console.error(`[ImageGenerator] Failed: ${errorMsg}`);
+
+            return {
+                imageUrl: this.getPlaceholderUrl(request),
+                emotion: request.emotion,
+                cached: false,
+                status: error.code === 'ECONNABORTED' ? 'timeout' as const : 'error' as const
+            };
         }
-
-        // Fallback/Mock return
-        const placeholderUrl = this.getPlaceholderUrl(request);
-        if (!request.customPrompt) {
-            this.cache.set(cacheKey, placeholderUrl);
-        }
-
-        return {
-            imageUrl: placeholderUrl,
-            emotion: request.emotion,
-            cached: false,
-            debugPrompt: payload
-        };
     }
 
     /**

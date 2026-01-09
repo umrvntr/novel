@@ -148,6 +148,12 @@ export interface DialogueResponse {
   rewardCode?: string;
   portraitUrl?: string;  // Speaker portrait from ComfyUI
   emotion?: string;       // Current speaker emotion
+  // Behavioral Image Generation
+  imageGenerating?: boolean;      // Is an image currently being generated?
+  imageQueuePosition?: number;    // User's position in generation queue
+  imageEstimatedTime?: number;    // Estimated seconds until completion
+  generatedImage?: string;        // URL of the fully generated image
+  imageError?: boolean;           // Did generation fail?
 }
 
 // ============================================================================

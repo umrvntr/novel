@@ -462,28 +462,242 @@
 
 /* Mobile Responsiveness */
 @media (max-width: 768px) {
+  .terminal-header {
+    height: 50px;
+    padding: 0 15px;
+  }
+
+  .header-title {
+    font-size: 0.75rem;
+    letter-spacing: 2px;
+  }
+
   .terminal-main-layout {
     flex-direction: column;
-    height: 100vh;
-    /* Ensure full viewport usage */
+    height: calc(100vh - 50px);
+    overflow: hidden;
   }
 
   .left-panel {
     flex: 0 0 auto;
-    height: 40vh;
+    width: 100%;
+    height: 56.25vw;
+    /* Strict 16:9 Aspect Ratio */
     border-right: none;
     border-bottom: 1px solid var(--panel-border);
-    /* Mobile brightness boost */
-    filter: brightness(1.2) contrast(1.1);
+    filter: brightness(1.1) contrast(1.1);
+    z-index: 10;
   }
 
-  .terminal-content {
-    padding: 15px;
-    /* Reduce padding on mobile */
+  .visual-feed-container {
+    height: 100%;
   }
 
   .feed-header {
-    padding: 5px 15px;
-    /* Compact header */
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 5;
+    background: linear-gradient(to bottom, rgba(0, 0, 0, 0.8), transparent);
+    border-bottom: none;
+    padding: 8px 12px;
+  }
+
+  .layer-portrait {
+    left: 8px;
+    bottom: 5px;
+    transform: none;
+    width: 28%;
+    max-width: 120px;
+  }
+
+  .vikayla-portrait .portrait-frame {
+    border-width: 1px;
+    box-shadow: 0 0 10px rgba(0, 255, 65, 0.2);
+  }
+
+  .right-panel {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .terminal-content {
+    padding: 12px;
+    flex: 1;
+    overflow-y: auto;
+    gap: 12px;
+  }
+
+  .chat-message {
+    max-width: 100%;
+    font-size: 0.85rem;
+  }
+
+  .speaker-tag {
+    min-width: 60px;
+    margin-right: 8px;
+  }
+
+  .terminal-input-area {
+    padding: 12px;
+  }
+
+  .overlay-text {
+    font-size: 0.6rem;
+    padding: 2px 4px;
+    bottom: 10px;
+    right: 10px;
+  }
+
+  .feed-footer {
+    display: none;
+    /* Hide footer to save space on mobile banner */
+  }
+}
+
+/* ========================================
+   GENERATED IMAGE LAYER (Behavioral Image Gen)
+   ======================================== */
+.layer-generated-image {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.9);
+}
+
+.generated-image {
+  max-width: 90%;
+  max-height: 90%;
+  border: 2px solid #00ff41;
+  box-shadow: 0 0 30px rgba(0, 255, 65, 0.5);
+}
+
+.generated-image.fade-in {
+  animation: imageFadeIn 1.5s ease-out forwards;
+}
+
+.dismiss-image-btn {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #00ff41;
+  border: 1px solid #00ff41;
+  padding: 8px 16px;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.8rem;
+  cursor: pointer;
+  z-index: 10;
+  transition: all 0.3s ease;
+  letter-spacing: 2px;
+}
+
+.dismiss-image-btn:hover {
+  background: #00ff41;
+  color: #000;
+  box-shadow: 0 0 15px #00ff41;
+}
+
+@keyframes imageFadeIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.95);
+    filter: blur(10px);
+  }
+
+  100% {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+  }
+}
+
+/* ========================================
+   GENERATING OVERLAY (Character is creating)
+   ======================================== */
+.generating-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.8);
+}
+
+.generating-pulse {
+  width: 80px;
+  height: 80px;
+  border: 3px solid #00ff41;
+  border-radius: 50%;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+
+  0%,
+  100% {
+    transform: scale(0.8);
+    opacity: 0.5;
+    box-shadow: 0 0 0 0 rgba(0, 255, 65, 0.5);
+  }
+
+  50% {
+    transform: scale(1.1);
+    opacity: 1;
+    box-shadow: 0 0 30px 10px rgba(0, 255, 65, 0.3);
+  }
+}
+
+.queue-status {
+  margin-top: 15px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.8rem;
+  color: #00ff41;
+  text-shadow: 0 0 5px rgba(0, 255, 65, 0.5);
+}
+
+.queue-status span {
+  background: rgba(0, 255, 65, 0.1);
+  padding: 2px 8px;
+  border: 1px solid rgba(0, 255, 65, 0.3);
+  border-radius: 4px;
+}
+
+.generating-text {
+  margin-top: 20px;
+  font-size: 0.9rem;
+  color: #00ff41;
+  letter-spacing: 3px;
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+
+  0%,
+  50% {
+    opacity: 1;
+  }
+
+  51%,
+  100% {
+    opacity: 0.5;
   }
 }

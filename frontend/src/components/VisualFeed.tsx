@@ -12,6 +12,11 @@ interface VisualFeedProps {
     status?: 'IDLE' | 'GENERATING' | 'CONNECTED' | 'SCANNING';
     geoCity?: string;
     sessionId?: string;
+    generatedImage?: string | null;  // URL or base64 from image gen
+    isGenerating?: boolean;          // Loading state for image gen
+    queuePosition?: number;
+    eta?: number;
+    onDismissImage?: () => void;
 }
 
 export const VisualFeed: React.FC<VisualFeedProps> = ({
@@ -19,21 +24,19 @@ export const VisualFeed: React.FC<VisualFeedProps> = ({
     emotion = 'neutral',
     status = 'CONNECTED',
     geoCity,
-    sessionId
+    sessionId,
+    generatedImage,
+    isGenerating = false,
+    queuePosition = 0,
+    eta = 0,
+    onDismissImage
 }) => {
     const [isLoading, setIsLoading] = useState(true);
     const [showNeuralNoise, setShowNeuralNoise] = useState(true);
 
-    // Clear neural noise effect when background loads
+    // Initial state setup
     useEffect(() => {
-        if (backgroundUrl) {
-            // Simulate loading delay for transition effect
-            const timer = setTimeout(() => {
-                setIsLoading(false);
-                setShowNeuralNoise(false);
-            }, 1500);
-            return () => clearTimeout(timer);
-        } else {
+        if (!backgroundUrl) {
             setIsLoading(true);
             setShowNeuralNoise(true);
         }
@@ -59,9 +62,14 @@ export const VisualFeed: React.FC<VisualFeedProps> = ({
                 <div className="layer-background">
                     {backgroundUrl ? (
                         <img
+                            key={backgroundUrl} // Force fresh image element when URL changes
                             src={backgroundUrl}
                             alt="City Background"
                             className={`bg-image ${isLoading ? 'loading' : 'loaded'}`}
+                            onLoad={() => {
+                                setIsLoading(false);
+                                setShowNeuralNoise(false);
+                            }}
                         />
                     ) : (
                         <div className="bg-placeholder">
@@ -86,8 +94,39 @@ export const VisualFeed: React.FC<VisualFeedProps> = ({
                     </div>
                 )}
 
+                {/* Layer 2: Generated Image (Character's creation) */}
+                {generatedImage && (
+                    <div className="layer-generated-image">
+                        <img
+                            src={generatedImage}
+                            alt="Generated"
+                            className="generated-image fade-in"
+                        />
+                        <button
+                            className="dismiss-image-btn"
+                            onClick={onDismissImage}
+                        >
+                            [ DISMISS ]
+                        </button>
+                    </div>
+                )}
+
+                {/* Generating Overlay (Character is creating) */}
+                {isGenerating && (
+                    <div className="generating-overlay">
+                        <div className="generating-pulse"></div>
+                        <span className="generating-text">MANIFESTING...</span>
+                        {(queuePosition > 0 || eta > 0) && (
+                            <div className="queue-status">
+                                {queuePosition > 0 && <span>QUEUE: {queuePosition}</span>}
+                                {eta > 0 && <span>ETA: {eta}s</span>}
+                            </div>
+                        )}
+                    </div>
+                )}
+
                 {/* Target indicator */}
-                <div className="overlay-text">TARGET: V8</div>
+                <div className="overlay-text">TARGET: ROZIE</div>
             </div>
 
             {/* Footer */}

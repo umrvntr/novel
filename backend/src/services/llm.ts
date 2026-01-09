@@ -148,25 +148,66 @@ export class LLMDialogueService implements LLMService {
   /**
    * Clean response: Remove unwanted formatting and make output intimate and readable
    */
-  private cleanResponse(text: string, isStreaming: boolean = false): string {
+  private cleanResponse(
+    text: string,
+    isStreaming: boolean = false,
+    onToken?: (data: any) => void,
+    streamContext?: { imageGenTriggered: boolean; pendingTasks?: Promise<any>[] }
+  ): string {
     // 1. Initial cleanup
     let cleaned = text;
 
-    // 2. Image Gen Trigger Extraction
-    const genMatch = cleaned.match(/\[GEN_IMG:\s*(.*?)\]/);
-    if (genMatch) {
+    // 2. Image Gen Trigger Extraction - Only fire ONCE per stream
+    const genMatch = cleaned.match(/\[GEN_IMG:\s*(.*?)\]/i);
+    if (genMatch && onToken && streamContext && !streamContext.imageGenTriggered) {
       const visualPrompt = genMatch[1];
-      console.log(`[LLMService] Detected Image Gen Trigger: ${visualPrompt}`);
+      console.log(`[LLMService] >>> TRIGGERING IMAGE GEN: ${visualPrompt}`);
 
-      // Fire and forget image gen
-      imageGenerator.generatePortrait({
-        speakerName: 'V8',
-        emotion: 'seductive',
-        customPrompt: visualPrompt
-      }).catch(err => console.error('[LLMService] Image Gen Trigger Failed:', err));
+      // Mark as triggered to prevent re-firing
+      streamContext.imageGenTriggered = true;
 
-      // Remove tag from output
-      cleaned = cleaned.replace(/\[GEN_IMG:[^\]]*\]/g, '');
+      // Emit "generating" state immediately
+      onToken({ imageGenerating: true, emotion: 'excited' });
+
+      // Async image generation
+      const genTask = imageGenerator.generatePortrait({
+        speakerName: 'Rozie',
+        emotion: 'excited',
+        customPrompt: visualPrompt,
+        onProgress: (prog) => {
+          // Emit progress via SSE
+          onToken({
+            imageQueuePosition: prog.queuePosition,
+            imageEstimatedTime: prog.eta
+          });
+        }
+      }).then(result => {
+        if (result.status === 'success') {
+          console.log('[LLMService] <<< IMAGE GEN SUCCESS:', result.imageUrl);
+          onToken({ generatedImage: result.imageUrl, emotion: 'proud', imageGenerating: false });
+        } else {
+          console.warn(`[LLMService] <<< IMAGE GEN FAILED: ${result.status}`);
+          onToken({
+            imageGenerating: false,
+            emotion: result.status === 'timeout' ? 'disappointed' : 'confused',
+            imageError: true
+          });
+        }
+      }).catch(err => {
+        console.error('[LLMService] !!! IMAGE GEN FATAL ERROR:', err);
+        onToken({ imageGenerating: false, emotion: 'disappointed', imageError: true });
+      });
+
+      // Track this task if context is provided
+      if (streamContext.pendingTasks) {
+        streamContext.pendingTasks.push(genTask);
+      }
+    }
+
+    // ALWAYS strip [GEN_IMG:...] tags from output (unconditional and aggressive)
+    // We use a broader match and then clean up to ensure no leakage
+    if (cleaned.toLowerCase().includes('[gen_img:')) {
+      cleaned = cleaned.replace(/\[GEN_IMG:[\s\S]*?\]/gi, '');
     }
 
     // 3. Robust Text Cleaning
@@ -319,10 +360,19 @@ RULES:
 - Example: (curious) What would you like to create today?
 - Keep responses natural. No JSON. No system markers.
 
+[IMAGE GENERATION]
+- You can CREATE VISUALS for the user.
+- MANDATORY: If you talk about SHOWING, CREATING, or SEEING something, you MUST include the tag: [GEN_IMG: descriptive prompt]
+- Description should be atmospheric: "a small white cat in space", "a vibrant cyberpunk street".
+- Example: (excited) Look at this! [GEN_IMG: a cute fluffy cat with glowing eyes]
+- Example: (happy) I made this for you. [GEN_IMG: a peaceful mountain lake at dawn]
+- NEVER talk about an image without emitting the [GEN_IMG] tag. It is the only way the user can actually see it.
+- Only trigger when the user asks, or when demonstrating your power.
+
 ${userName ? `[USER] Name: ${userName}` : ''}
 ${scriptContext ? `[CONTEXT] ${scriptContext}` : ''}
 
-[SYSTEM] Be Rozie. Warm. Teaching. Guide to umrgen.ngrok.io.`;
+[SYSTEM] Be Rozie. Warm. Teaching. Guide. You are helpful and love painting dreams for the user.`;
 
     this.systemPromptCache.set(sessionId, systemPrompt);
     return systemPrompt;
@@ -534,6 +584,11 @@ ${scriptContext ? `[CONTEXT] ${scriptContext}` : ''}
       const safeSessionId = request.sessionId || 'anonymous';
       const messages = await this.buildMessages(request);
       const prompt = this.messagesToPrompt(messages);
+
+      // HEURISTIC: Check if user explicitly asked for generation (Backup for soft LLM triggers)
+      const userWantsImage = request.userInput?.toLowerCase().match(/(?:generate|show me|create|draw|paint)\s+(?:a |an |the )?([\w\s]{3,20})/i);
+      let imageHeuristicTriggered = false;
+
       console.log(`[LLMService] Sending streaming request to: ${this.endpoint}/api/generate`);
 
       const response = await axios.post(
@@ -556,6 +611,10 @@ ${scriptContext ? `[CONTEXT] ${scriptContext}` : ''}
       let rawAccumulated = '';
       let lastSentLength = 0;
       let emotionEmitted = false; // Flag to emit emotion only once
+      const streamContext = {
+        imageGenTriggered: false,
+        pendingTasks: [] as Promise<any>[]
+      }; // Mutable context object
 
       return new Promise((resolve, reject) => {
         response.data.on('data', async (chunk: any) => {
@@ -585,15 +644,22 @@ ${scriptContext ? `[CONTEXT] ${scriptContext}` : ''}
                 }
               }
 
-              // BUFFERING FIX:
-              // If we are starting with a parenthesized tag but haven't closed it yet,
-              // DO NOT emit anything. Wait for the closing ')' to arrive.
-              // This prevents sending "(flirty" before we know to strip it.
-              if (rawAccumulated.trimStart().startsWith('(') && !rawAccumulated.includes(')')) {
-                continue;
-              }
+              let currentCleaned = this.cleanResponse(rawAccumulated, true, onToken, streamContext);
 
-              const currentCleaned = this.cleanResponse(rawAccumulated, true);
+              // BUFFERING LOGIC: Don't send partial tags (e.g. "[GEN_I" or "(happy")
+              const lastOpenBracket = currentCleaned.lastIndexOf('[');
+              const lastCloseBracket = currentCleaned.lastIndexOf(']');
+              const lastOpenParen = currentCleaned.lastIndexOf('(');
+              const lastCloseParen = currentCleaned.lastIndexOf(')');
+
+              // If unclosed bracket/paren at the end, wait for completion
+              if (lastOpenBracket > lastCloseBracket || lastOpenParen > lastCloseParen) {
+                const marker = Math.max(
+                  lastOpenBracket > lastCloseBracket ? lastOpenBracket : -1,
+                  lastOpenParen > lastCloseParen ? lastOpenParen : -1
+                );
+                currentCleaned = currentCleaned.substring(0, marker);
+              }
 
               // Only send the NEWLY cleaned bits
               if (currentCleaned.length > lastSentLength) {
@@ -608,7 +674,7 @@ ${scriptContext ? `[CONTEXT] ${scriptContext}` : ''}
         });
 
         response.data.on('end', async () => {
-          const finalCleaned = this.cleanResponse(rawAccumulated, false);
+          const finalCleaned = this.cleanResponse(rawAccumulated, false, onToken, streamContext);
 
           // Emit any missing bits
           if (finalCleaned.length > lastSentLength) {
@@ -658,6 +724,48 @@ ${scriptContext ? `[CONTEXT] ${scriptContext}` : ''}
             await userProfile.markIntroComplete(safeSessionId);
           } catch (e) {
             // Ignore
+          }
+
+          // HEURISTIC BACKUP: If the user asked for an image but the LLM completely ignored the tag
+          // or just talked about it, we force a generation of the detected subject as a safety net.
+          if (userWantsImage && !streamContext.imageGenTriggered && !imageHeuristicTriggered) {
+            const subject = userWantsImage[1].trim();
+            console.log(`[LLM] Heuristic: User asked for "${subject}" but no tag emitted. Force-triggering...`);
+            const fallbackPrompt = `${subject}, cinematic, highly detailed, 8k, masterpiece`;
+
+            imageHeuristicTriggered = true;
+            streamContext.imageGenTriggered = true;
+
+            const task = (async () => {
+              try {
+                onToken({ imageGenerating: true });
+                const result = await imageGenerator.generatePortrait({
+                  speakerName: 'System',
+                  emotion: 'neutral',
+                  customPrompt: fallbackPrompt,
+                  width: 896,
+                  height: 512,
+                  onProgress: (p) => onToken({ imageQueuePosition: p.queuePosition, imageEstimatedTime: p.eta })
+                });
+                if (result.status === 'success') {
+                  onToken({ generatedImage: result.imageUrl });
+                } else {
+                  onToken({ imageError: true });
+                }
+              } catch (err) {
+                console.error('[LLM] Heuristic generation failed:', err);
+                onToken({ imageError: true });
+              } finally {
+                onToken({ imageGenerating: false });
+              }
+            })();
+            streamContext.pendingTasks.push(task);
+          }
+
+          if (streamContext.pendingTasks.length > 0) {
+            console.log(`[LLMService] Stream finished but waiting for ${streamContext.pendingTasks.length} pending tasks...`);
+            await Promise.all(streamContext.pendingTasks);
+            console.log('[LLMService] All pending tasks finished. Closing stream.');
           }
 
           resolve();
