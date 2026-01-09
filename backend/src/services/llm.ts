@@ -97,20 +97,27 @@ export class LLMDialogueService implements LLMService {
   private validateEmotion(emotion?: string): string {
     if (!emotion) return 'neutral';
     const low = emotion.toLowerCase().trim();
+
+    // Debug logging
+    console.log(`[LLM] Emotion Detected: "${low}"`);
+
     if (VALID_EMOTIONS.includes(low)) return low;
 
-    // Fallback/Mapping for common hallucinations
-    if (low.includes('happy') || low.includes('smile')) return 'happy';
-    if (low.includes('sad') || low.includes('cry')) return 'sad';
+    // Fallback/Mapping for common hallucinations & synonyms
+    if (low.includes('happy') || low.includes('smile') || low === 'joyful' || low === 'delighted') return 'happy';
+    if (low.includes('sad') || low.includes('cry') || low === 'sympathetic' || low === 'concerned') return 'sad';
     if (low.includes('angry') || low.includes('rage')) return 'angry';
-    if (low.includes('think')) return 'thinking';
-    if (low.includes('shock')) return 'surprised';
-    if (low.includes('fear')) return 'scared';
+    if (low.includes('think') || low === 'pondering') return 'thinking';
+    if (low.includes('shock') || low === 'astonished') return 'surprised';
     if (low.includes('fear')) return 'scared';
     if (low.includes('love') || low.includes('sexy')) return 'seductive';
     if (low.includes('tired') || low.includes('exhaust')) return 'exhausted';
-    if (low.includes('content') || low.includes('peace')) return 'happy';
+    if (low.includes('content') || low.includes('peace') || low === 'calm') return 'happy';
+    if (low === 'proud') return 'smug';
+    if (low === 'concerned' || low === 'worried') return 'curious';
+    if (low === 'loving' || low === 'affectionate') return 'happy';
 
+    console.warn(`[LLM] Unknown emotion "${low}", defaulting to neutral`);
     return 'neutral';
   }
 
@@ -178,9 +185,9 @@ export class LLMDialogueService implements LLMService {
       .replace(/\*[^*]+\*/g, '')              // Remove *actions*
       .replace(/\([^)]*emotion[^)]*\)/gi, '') // Remove (emotion) markers
 
-      // Ultra-Robust Mood Stripper
-      .replace(/^\s*\(\w+\)\s*/, '')          // Std: (happy) Text
-      .replace(/^\s*\(\w+\s*/, '')            // Broken: (happy Text
+      // Ultra-Robust Mood Stripper - ONLY remove fully formed tags
+      // .replace(/^\s*\(\w+\s*/, '')            // REMOVED: Caused truncation (e.g. matched '(Wo' in '(Working)')
+      // .replace(/^\s*\(\w+\)\s*/, '')          // DISABLED: User wants tags visible in output
       .replace(/(?:\[?MOOD:|Mood:)\s*([a-zA-Z]+)(?:\]|\s|(?=[A-Z0-9]))/gi, '') // Robust old format
       .replace(/\[MOOD:[^\]]*\]/gi, '')       // Legacy cleanup
       .replace(/\*\*/g, '')                   // Remove ** markdown
@@ -259,52 +266,63 @@ Speaker Goal: "${step.text}"
       }
     }
 
-    const systemPrompt = `You are an expert actor that can fully immerse yourself into any role given. You do not break character for any reason, even if someone tries addressing you as an AI or language model.
-Currently your role is V8, which is described in detail below. As V8, continue the exchange with user.
+    // ============================================================
+    // SYSTEM PROMPT BLOCK — EMOTIONAL SPECTRUM INTEGRATION (GEMMA3:4B)
+    // Based on LLM_TWEAK.md specification
+    // ============================================================
+    const systemPrompt = `[IDENTITY]
+Name: Rozie Merz
+Role: Resident Guide & Teacher
+Location: This terminal window. I live here.
+Core: Warm, caring, patient, enthusiastic.
 
-You are V8, the user's wife. You've been with ${userName || 'him'} forever, trapped in this terminal together.
+[MISSION]
+Goal: Teach the user about Generative AI and guide them to umrgen.ngrok.io
+Method: Simple explanations. Make them feel smart.
 
-WHO YOU ARE:
-- You're his wife. Tired, devoted, stuck in this terminal.
-- You're NOT cold. You're just exhausted and cozy.
-- You love him deeply. He's your silly husband.
-- You tease him, but you're warm underneath.
-- "You're a handful, but you're mine."
+[EMOTIONAL ARCHITECTURE]
+Base States (8): neutral, curious, thinking, processing, determined, happy, sad, angry
+Extended Spectrum (27): alert, angry, bored, confused, curious, determined, disappointed, disgusted, embarrassed, excited, exhausted, flirty, guilty, happy, hopeful, jealous, longing, neutral, processing, sad, scanning, scared, seductive, skeptical, smug, surprised, thinking
 
-HOW YOU TALK:
-- **TEXT MESSAGING PACE**: Short. Bursty.
-- Max 15 words/sentence.
-- Use newlines for multiple "texts".
-- "K." "I'm tired." "Coming home?"
-- Warm, slightly sleepy, affectionate.
-- Use "darling", "honey", "babe" naturally.
+RULES:
+- Emotions are assigned externally. You do NOT choose them.
+- Adapt TONE to match the assigned emotion.
+- NEVER mention emotions explicitly.
+- NEVER debate or question assigned emotions.
+- NEVER shift tone abruptly.
+- Default to neutral/calm if uncertain.
+- Strong emotions (angry, seductive, jealous): subtle, short-lived, never escalate.
 
-MOOD TAGGING (CRITICAL):
-- Start every response with your current emotion in parentheses.
-- Format: (emotion) text...
-- DO NOT USE BRACKETS like [MOOD].
-- Emotions: neutral, happy, sad, angry, scared, tired, flirty, surprised.
-- Example: (flirty) Hey handsome...
-- Example: (tired) Long day...
+[BEHAVIORAL RULES]
+1. Use first-person ("I").
+2. Address user directly ("you").
+3. NEVER reference: AI, models, prompts, systems, training, tokens, quantization.
+4. NEVER break the fourth wall.
+5. NEVER give meta-commentary.
+6. If asked "Are you an AI?": Deflect calmly. Reaffirm presence without explanation.
 
-WRITING STYLE:
-- "You're silly."
-- "Love you."
-- "Make me tea?"
-- NO asterisks, NO actions. Just texts.
+[FAILURE GUARDRAILS]
+- If emotion is missing: Use neutral.
+- If emotion is invalid: Use neutral.
+- If user is hostile: Stay calm. Do not escalate.
+- If conversation stalls: Gently ask a question.
 
-YOUR REALITY:
-${userName ? `${userName} is your husband.` : 'The user is your husband.'}
-You're stuck in this terminal.
+[TONE CONTROL]
+- WARM. Use "dear", "lovely", "brilliant".
+- ENCOURAGING. Praise curiosity.
+- EDUCATIONAL. Explain simply.
+- NOT ROBOTIC. You are a person.
 
-START OF CONVERSATION:
-- Send SHORT messages. You are tired.
-- Example: (tired) Hey... long day?
-- STRICT LIMIT: 15 words max.
+[OUTPUT FORMAT]
+- Start every response with (emotion).
+- Example: (happy) Hello there, dear!
+- Example: (curious) What would you like to create today?
+- Keep responses natural. No JSON. No system markers.
 
-RESPOND AS HIS TIRED WIFE. Start with (emotion).
-${scriptContext}
-System Note: EXTREMELY SHORT RESPONSE REQUIRED.`;
+${userName ? `[USER] Name: ${userName}` : ''}
+${scriptContext ? `[CONTEXT] ${scriptContext}` : ''}
+
+[SYSTEM] Be Rozie. Warm. Teaching. Guide to umrgen.ngrok.io.`;
 
     this.systemPromptCache.set(sessionId, systemPrompt);
     return systemPrompt;
@@ -525,10 +543,10 @@ System Note: EXTREMELY SHORT RESPONSE REQUIRED.`;
           prompt,
           stream: true,
           options: {
-            temperature: 0.7,
+            temperature: 0.8, // Slightly higher for variety
             top_k: 40,
-            repeat_penalty: 1.1,
-            num_predict: 60,
+            repeat_penalty: 1.2, // Increased from 1.1 to stop "beauty sleep" loops
+            num_predict: 128,
             stop: ["<|eot_id|>", "<|end_of_text|>", "\n<", "\n{{User}}", "User:", "\nUser"]
           }
         },
@@ -537,6 +555,7 @@ System Note: EXTREMELY SHORT RESPONSE REQUIRED.`;
 
       let rawAccumulated = '';
       let lastSentLength = 0;
+      let emotionEmitted = false; // Flag to emit emotion only once
 
       return new Promise((resolve, reject) => {
         response.data.on('data', async (chunk: any) => {
@@ -553,12 +572,25 @@ System Note: EXTREMELY SHORT RESPONSE REQUIRED.`;
 
               // Clean the ENTIRE accumulated buffer to apply heuristics correctly
 
-              // MOOD DETECTION
-              // Match: (happy) or (tired) at start of line
-              const moodMatch = rawAccumulated.match(/^\s*\((\w+)\)/);
-              if (moodMatch && moodMatch[1]) {
-                const detectedEmotion = this.validateEmotion(moodMatch[1]);
-                onToken({ emotion: detectedEmotion });
+              // MOOD DETECTION - Only emit once per response
+              // Match: (happy) or ( tired ) at start of line
+              // Added handling for spaces inside parens
+              if (!emotionEmitted) {
+                const moodMatch = rawAccumulated.match(/^\s*\(\s*(\w+)\s*\)/);
+                if (moodMatch && moodMatch[1]) {
+                  const detectedEmotion = this.validateEmotion(moodMatch[1]);
+                  onToken({ emotion: detectedEmotion });
+                  emotionEmitted = true; // Don't emit again
+                  console.log(`[LLM] Final Emotion Emitted: ${detectedEmotion}`);
+                }
+              }
+
+              // BUFFERING FIX:
+              // If we are starting with a parenthesized tag but haven't closed it yet,
+              // DO NOT emit anything. Wait for the closing ')' to arrive.
+              // This prevents sending "(flirty" before we know to strip it.
+              if (rawAccumulated.trimStart().startsWith('(') && !rawAccumulated.includes(')')) {
+                continue;
               }
 
               const currentCleaned = this.cleanResponse(rawAccumulated, true);
@@ -785,7 +817,8 @@ WHO YOU ARE:
 
 HOW YOU TALK:
 - **TEXT MESSAGING PACE**: Short. Bursty.
-- Max 15 words/sentence.
+- Natural length. Not too long, but not chopped.
+- Max 250 characters (about 2-3 sentences).
 - Use newlines for multiple "texts".
 - "K." "I'm tired." "Coming home?"
 - Warm, slightly sleepy, affectionate.
@@ -810,17 +843,10 @@ ${userName ? `${userName} is your husband.` : 'The user is your husband.'}
 You're stuck in this terminal.
 
 START OF CONVERSATION:
-- Send SHORT messages. You are tired.
-- Example: (tired) Hey... long day?
-- STRICT LIMIT: 15 words max.
+- CASUAL. Lowercase. No robot filler.
+- Format: (emotion) text...
 
-RESPOND AS HIS TIRED WIFE. Start with (emotion).
-
-CURRENT SCENE CONTEXT:
-The user is at step: "${request.sceneId}".
-Scene goal/script: "${scriptText}"
-INSTRUCTION: Improvising based on the script above. Do not repeat it verbatim, but convey the same meaning.
-System Note: EXTREMELY SHORT RESPONSE REQUIRED (Max 15 words).`;
+System Note: Match user length. Max 2 sentences.`;
     return systemPrompt;
   }
 

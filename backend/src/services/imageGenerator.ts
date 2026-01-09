@@ -54,9 +54,16 @@ class ImageGeneratorService {
             promptText += ', <lora:v8:1.0>, high quality, masterpiece';
         }
 
+        // Prompt Truncation (Stability Fix)
+        // User reported hangs with large text blocks.
+        if (promptText.length > 1000) {
+            console.warn('[ImageGenerator] Truncating prompt to 1000 chars');
+            promptText = promptText.substring(0, 1000);
+        }
+
         const payload = {
             prompt: promptText,
-            negative_prompt: "bad quality, blurry, ugly",
+            negative_prompt: "bad quality, blurry, ugly", // Typically short, but ensuring < 500 chars
             width: 512,
             height: 512,
             steps: 20
