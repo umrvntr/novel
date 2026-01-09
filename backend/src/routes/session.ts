@@ -49,23 +49,30 @@ sessionRouter.post('/', async (req, res) => {
         const { userProfile } = await import('../services/userProfile.js');
         const profile = await userProfile.getProfile(sessionId);
 
-        // Ensure session structure exists in persistence if not already
-        const existingMemory = await sessionMemory.getMemory(sessionId);
+        // Initialize memory and check for existing background
+        let existingMemory = await sessionMemory.getMemory(sessionId);
         if (!existingMemory) {
-            await sessionMemory.saveMemory(sessionId, {
+            existingMemory = {
                 sessionId,
                 createdAt: Date.now(),
                 lastUpdated: Date.now(),
                 entries: []
-            });
+            };
+            await sessionMemory.saveMemory(sessionId, existingMemory);
+        }
+
+        // If background exists in memory but not in cache, sync to cache
+        if (existingMemory.backgroundUrl && !backgroundCache.has(sessionId)) {
+            backgroundCache.set(sessionId, existingMemory.backgroundUrl);
+            console.log(`[Session] Restored background from persistence: ${existingMemory.backgroundUrl}`);
         }
 
         // Fetch geo data (IP-based, just for initial context)
         const geoData = await geoService.getGeoData(clientIp);
         const timeOfDay = geoService.getTimeOfDay(geoData.timezone);
 
-        // AUTOMATION: Trigger background generation immediately
-        if (geoData.city !== 'Unknown') {
+        // AUTOMATION: Trigger background generation immediately (only if not already generated)
+        if (geoData.city !== 'Unknown' && !backgroundCache.has(sessionId)) {
             console.log(`[Session] Auto-triggering background generation for ${geoData.city}...`);
             (async () => {
                 try {
@@ -81,12 +88,21 @@ sessionRouter.post('/', async (req, res) => {
                     if (result.status === 'success') {
                         const proxiedUrl = result.imageUrl;
                         backgroundCache.set(sessionId, proxiedUrl);
+
+                        // Persist backgroundUrl to memory
+                        if (existingMemory) {
+                            existingMemory.backgroundUrl = proxiedUrl;
+                            await sessionMemory.saveMemory(sessionId, existingMemory);
+                        }
+
                         console.log(`[Session] Auto-background ready for ${geoData.city}: ${proxiedUrl}`);
                     }
                 } catch (err) {
                     console.error('[Session] Auto-background generation failed:', err);
                 }
             })();
+        } else if (backgroundCache.has(sessionId)) {
+            console.log(`[Session] Background already exists for session ${sessionId}, skipping generation.`);
         }
 
         const response: InitSessionResponse = {
@@ -236,6 +252,34 @@ sessionRouter.post('/generate-hacker', async (req, res) => {
         }
     } catch (error: any) {
         console.error('[Session] Generate hacker failed:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * GET /api/session/history/:sessionId
+ * Fetch session history for the feed
+ */
+sessionRouter.get('/history/:sessionId', async (req, res) => {
+    try {
+        const { sessionId } = req.params;
+        console.log(`[Session] Fetching history for: ${sessionId}`);
+        const memory = await sessionMemory.getMemory(sessionId);
+
+        if (!memory) {
+            console.warn(`[Session] No memory file found for session: ${sessionId}`);
+            return res.json({ success: true, entries: [] });
+        }
+
+        console.log(`[Session] History found for ${sessionId}: ${memory.entries.length} entries`);
+
+        res.json({
+            success: true,
+            entries: memory.entries,
+            sessionId: memory.sessionId
+        });
+    } catch (error: any) {
+        console.error('[Session] History fetch failed:', error);
         res.status(500).json({ error: error.message });
     }
 });

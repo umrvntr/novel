@@ -8,6 +8,7 @@ import { TerminalInput } from './components/TerminalInput';
 import { VisualFeed } from './components/VisualFeed';
 import { RewardModule } from './components/RewardModule';
 import { TypewriterText } from './components/TypewriterText';
+import HistoryFeed, { HistoryEntry } from './components/HistoryFeed';
 import { gameState } from './engine/GameStateManager';
 import { Choice } from '@shared/gameScript';
 import './App.css';
@@ -29,7 +30,6 @@ export function App() {
   const [activeChoices, setActiveChoices] = useState<Choice[] | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [activeReward, setActiveReward] = useState<string | null>(null);
-  const [currentPortrait, setCurrentPortrait] = useState<string | null>(null);
   const [currentEmotion, setCurrentEmotion] = useState<string>('neutral');
   const [connectionStatus, setConnectionStatus] = useState<'CONNECTED' | 'OFFLINE' | 'CONNECTING'>('CONNECTING');
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
@@ -38,6 +38,8 @@ export function App() {
   const [geoCity, setGeoCity] = useState<string>('');
   const [imageQueuePosition, setImageQueuePosition] = useState<number>(0);
   const [imageETA, setImageETA] = useState<number>(0);
+  const [historyEntries, setHistoryEntries] = useState<HistoryEntry[]>([]);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const hasInitialized = useRef(false);
 
@@ -111,6 +113,18 @@ export function App() {
       }
     };
     check();
+  };
+
+  const fetchHistory = async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/init-session/history/${gameState.getSessionId()}`);
+      const data = await res.json();
+      if (data.success) {
+        setHistoryEntries(data.entries);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch history', err);
+    }
   };
 
   const startGame = async () => {
@@ -207,7 +221,6 @@ export function App() {
           if (line.startsWith('data: ')) {
             try {
               const data = JSON.parse(line.slice(6));
-              if (data.portraitUrl) setCurrentPortrait(data.portraitUrl);
               if (data.emotion) pendingEmotion = data.emotion;
               if (data.rewardCode) setActiveReward(data.rewardCode);
               if (data.choices) setActiveChoices(data.choices);
@@ -285,7 +298,6 @@ export function App() {
       gameState.reset();
       setMessages([]);
       setActiveReward(null);
-      setCurrentPortrait(null);
       startGame();
     }
   };
@@ -297,7 +309,12 @@ export function App() {
           <span className="pulse">●</span>
           <span>NEURAL_LINK</span>
         </div>
-        <button className="reset-btn" onClick={handleReset}>[RESET]</button>
+        <div className="header-actions" style={{ display: 'flex', gap: '10px' }}>
+          <button className="history-btn" onClick={() => { fetchHistory(); setIsHistoryOpen(true); }}>
+            [ HISTORY ]
+          </button>
+          <button className="reset-btn" onClick={handleReset}>[RESET]</button>
+        </div>
       </header>
 
       <div className="terminal-main-layout">
@@ -345,13 +362,23 @@ export function App() {
             )}
           </div>
 
-          {activeReward && <div className="reward-container"><RewardModule code={activeReward} /></div>}
+          {activeReward && (
+            <div className="reward-container">
+              <RewardModule code={activeReward} onClose={() => setActiveReward(null)} />
+            </div>
+          )}
 
           <div className="terminal-input-area">
             <TerminalInput onSendMessage={handleSendMessage} disabled={isLoading} placeholder="Enter your response..." />
           </div>
         </div>
       </div>
+
+      <HistoryFeed
+        entries={historyEntries}
+        isOpen={isHistoryOpen}
+        onClose={() => setIsHistoryOpen(false)}
+      />
     </div>
   );
 }

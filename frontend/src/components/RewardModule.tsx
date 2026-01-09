@@ -3,9 +3,10 @@ import styles from './RewardModule.module.css';
 
 interface RewardModuleProps {
     code: string;
+    onClose?: () => void;
 }
 
-export function RewardModule({ code }: RewardModuleProps) {
+export function RewardModule({ code, onClose }: RewardModuleProps) {
     const [copied, setCopied] = useState(false);
 
     const handleCopy = () => {
@@ -18,8 +19,15 @@ export function RewardModule({ code }: RewardModuleProps) {
         <div className={styles.container}>
             <div className={styles.glitchBox}>
                 <div className={styles.header}>
-                    <span className={styles.pulse}>●</span>
-                    <span>REWARD_DECRYPTED</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span className={styles.pulse}>●</span>
+                        <span>REWARD_DECRYPTED</span>
+                    </div>
+                    {onClose && (
+                        <button className={styles.closeBtn} onClick={onClose}>
+                            [X]
+                        </button>
+                    )}
                 </div>
                 <div className={styles.body}>
                     <p className={styles.info}>PRIZE: 50 PRO IMAGE GENERATIONS</p>

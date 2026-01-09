@@ -23,9 +23,12 @@ export interface SessionMemory {
     entries: MemoryEntry[];
     summary?: string;
     sceneCache?: Record<string, string>; // Sprint 2.2: Added cache
+    backgroundUrl?: string; // Persistent background storage
 }
 
 class SessionMemoryService {
+    private writeQueues: Map<string, Promise<void>> = new Map();
+
     constructor() {
         this.ensureMemoryDir();
     }
@@ -59,7 +62,9 @@ class SessionMemoryService {
             }
 
             const data = fs.readFileSync(filePath, 'utf-8');
-            return JSON.parse(data) as SessionMemory;
+            const memory = JSON.parse(data) as SessionMemory;
+            console.log(`[SessionMemory] Loaded session ${sessionId} with ${memory.entries?.length || 0} entries`);
+            return memory;
         } catch (error) {
             console.error(`[SessionMemory] Failed to load session ${sessionId}:`, error);
             return null;
@@ -75,7 +80,7 @@ class SessionMemoryService {
         try {
             memory.lastUpdated = Date.now();
             fs.writeFileSync(filePath, JSON.stringify(memory, null, 2));
-            console.log(`[SessionMemory] Saved session ${sessionId}`);
+            console.log(`[SessionMemory] Saved session ${sessionId} (${memory.entries?.length || 0} entries)`);
         } catch (error) {
             console.error(`[SessionMemory] Failed to save session ${sessionId}:`, error);
         }
@@ -85,33 +90,41 @@ class SessionMemoryService {
      * Add entry to session memory
      */
     async addEntry(sessionId: string, entry: MemoryEntry): Promise<void> {
-        let memory = await this.getMemory(sessionId);
+        // Use a write queue to serialize all updates for this sessionId
+        const currentQueue = this.writeQueues.get(sessionId) || Promise.resolve();
 
-        if (!memory) {
-            memory = {
-                sessionId,
-                createdAt: Date.now(),
-                lastUpdated: Date.now(),
-                entries: []
-            };
-        }
+        const nextOp = currentQueue.then(async () => {
+            let memory = await this.getMemory(sessionId);
 
-        memory.entries.push({
-            ...entry,
-            timestamp: entry.timestamp || Date.now()
+            if (!memory) {
+                memory = {
+                    sessionId,
+                    createdAt: Date.now(),
+                    lastUpdated: Date.now(),
+                    entries: []
+                };
+            }
+
+            memory.entries.push({
+                ...entry,
+                timestamp: entry.timestamp || Date.now()
+            });
+
+            // Auto-summary if history gets long
+            if (memory.entries.length > 50 && (!memory.lastUpdated || Date.now() - memory.lastUpdated > 1000 * 60 * 60)) {
+                memory.summary = await this.generateSummary(sessionId);
+            }
+
+            // Keep last 100 entries
+            if (memory.entries.length > 100) {
+                memory.entries = memory.entries.slice(-100);
+            }
+
+            await this.saveMemory(sessionId, memory);
         });
 
-        // Auto-summary if history gets long
-        if (memory.entries.length > 50 && (!memory.lastUpdated || Date.now() - memory.lastUpdated > 1000 * 60 * 60)) {
-            memory.summary = await this.generateSummary(sessionId);
-        }
-
-        // Keep last 100 entries
-        if (memory.entries.length > 100) {
-            memory.entries = memory.entries.slice(-100);
-        }
-
-        await this.saveMemory(sessionId, memory);
+        this.writeQueues.set(sessionId, nextOp);
+        return nextOp;
     }
 
     /**

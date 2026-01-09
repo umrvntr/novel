@@ -9,6 +9,8 @@ import type { DialogueRequest, DialogueResponse, Choice, GeneratorResult } from 
 import { GAME_CONFIG, GAME_STEPS, getStep } from '@shared/gameScript.js';
 import { generatorService } from './generator.js';
 import { imageGenerator } from './imageGenerator.js';
+import { sessionMemory } from './sessionMemory.js';
+import { sessionManager } from './sessionManager.js';
 
 
 interface LLMService {
@@ -152,7 +154,7 @@ export class LLMDialogueService implements LLMService {
     text: string,
     isStreaming: boolean = false,
     onToken?: (data: any) => void,
-    streamContext?: { imageGenTriggered: boolean; pendingTasks?: Promise<any>[] }
+    streamContext?: { imageGenTriggered: boolean; pendingTasks?: Promise<any>[]; sessionId?: string }
   ): string {
     // 1. Initial cleanup
     let cleaned = text;
@@ -181,10 +183,25 @@ export class LLMDialogueService implements LLMService {
             imageEstimatedTime: prog.eta
           });
         }
-      }).then(result => {
+      }).then(async result => {
         if (result.status === 'success') {
           console.log('[LLMService] <<< IMAGE GEN SUCCESS:', result.imageUrl);
           onToken({ generatedImage: result.imageUrl, emotion: 'proud', imageGenerating: false });
+
+          // Save to persistent session memory
+          if (streamContext?.sessionId) {
+            try {
+              await sessionMemory.addEntry(streamContext.sessionId, {
+                timestamp: Date.now(),
+                type: 'event',
+                content: `IMAGE_GEN: ${visualPrompt}`,
+                metadata: { imageUrl: result.imageUrl, prompt: visualPrompt }
+              });
+              console.log(`[LLMService] Saved image event to history for ${streamContext.sessionId}`);
+            } catch (e) {
+              console.warn('[LLM] Failed to save image event to memory');
+            }
+          }
         } else {
           console.warn(`[LLMService] <<< IMAGE GEN FAILED: ${result.status}`);
           onToken({
@@ -580,8 +597,19 @@ ${scriptContext ? `[CONTEXT] ${scriptContext}` : ''}
 
   async streamDialogue(request: DialogueRequest, onToken: (data: Partial<DialogueResponse>) => void): Promise<void> {
     try {
-      console.log(`[LLMService] streamDialogue initiated for scene: ${request.sceneId}`);
       const safeSessionId = request.sessionId || 'anonymous';
+      console.log(`[LLMService] streamDialogue initiated for session: ${safeSessionId}, scene: ${request.sceneId}`);
+
+      // Save user input to history if present
+      if (request.userInput) {
+        await sessionMemory.addEntry(safeSessionId, {
+          timestamp: Date.now(),
+          type: 'user_input',
+          content: request.userInput
+        });
+        console.log(`[LLMService] Saved user input to history for ${safeSessionId}`);
+      }
+
       const messages = await this.buildMessages(request);
       const prompt = this.messagesToPrompt(messages);
 
@@ -613,7 +641,8 @@ ${scriptContext ? `[CONTEXT] ${scriptContext}` : ''}
       let emotionEmitted = false; // Flag to emit emotion only once
       const streamContext = {
         imageGenTriggered: false,
-        pendingTasks: [] as Promise<any>[]
+        pendingTasks: [] as Promise<any>[],
+        sessionId: safeSessionId
       }; // Mutable context object
 
       return new Promise((resolve, reject) => {
@@ -702,8 +731,6 @@ ${scriptContext ? `[CONTEXT] ${scriptContext}` : ''}
 
           // Save response to memory
           try {
-            const { sessionManager } = await import('./sessionManager.js');
-            const { sessionMemory } = await import('./sessionMemory.js');
             const entry = {
               timestamp: Date.now(),
               type: 'system_response' as const,
@@ -714,6 +741,7 @@ ${scriptContext ? `[CONTEXT] ${scriptContext}` : ''}
             await sessionManager.updateSession(safeSessionId, {
               entries: [...session.entries.slice(-99), entry]
             });
+            console.log(`[LLMService] Saved system response to history for ${safeSessionId}`);
           } catch (e) {
             console.warn('[LLM] Failed to save response to memory');
           }
@@ -785,7 +813,7 @@ ${scriptContext ? `[CONTEXT] ${scriptContext}` : ''}
    * Format raw LLM response into DialogueResponse
    */
   private async formatDialogueResponse(rawText: string, request: DialogueRequest): Promise<DialogueResponse> {
-    const text = this.cleanResponse(rawText) || 'Got it. What would you like to try next?';
+    const text = this.cleanResponse(rawText, false, undefined, { imageGenTriggered: false, sessionId: request.sessionId }) || 'Got it. What would you like to try next?';
     const choices = this.generateChoices(request);
     const emotion = 'neutral';
 
@@ -804,10 +832,17 @@ ${scriptContext ? `[CONTEXT] ${scriptContext}` : ''}
       const rawText = await this.callLLM(messages, safeSessionId);
       const result = await this.formatDialogueResponse(rawText, request);
 
+      // Save user input to history if present
+      if (request.userInput) {
+        await sessionMemory.addEntry(safeSessionId, {
+          timestamp: Date.now(),
+          type: 'user_input',
+          content: request.userInput
+        });
+      }
+
       // Save response to memory
       try {
-        const { sessionManager } = await import('./sessionManager.js');
-        const { sessionMemory } = await import('./sessionMemory.js');
         const entry = {
           timestamp: Date.now(),
           type: 'system_response' as const,
@@ -818,6 +853,7 @@ ${scriptContext ? `[CONTEXT] ${scriptContext}` : ''}
         await sessionManager.updateSession(safeSessionId, {
           entries: [...session.entries.slice(-99), entry]
         });
+        console.log(`[LLMService] Saved generateDialogue interaction for ${safeSessionId}`);
       } catch (e) {
         console.warn('[LLM] Failed to save response to memory');
       }
